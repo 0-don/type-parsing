@@ -1,4 +1,3 @@
-// src/extension.ts
 import * as ts from "typescript";
 import * as vscode from "vscode";
 
