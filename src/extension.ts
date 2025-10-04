@@ -1,13 +1,7 @@
 import * as ts from "typescript";
 import * as vscode from "vscode";
 
-let outputChannel: vscode.OutputChannel;
-
 export async function activate(context: vscode.ExtensionContext) {
-  outputChannel = vscode.window.createOutputChannel("Type Parsing");
-  outputChannel.show();
-  outputChannel.appendLine("=== Extension Activated ===");
-
   const decorationType = vscode.window.createTextEditorDecorationType({
     after: {
       margin: "0 0 0 1em",
@@ -19,7 +13,6 @@ export async function activate(context: vscode.ExtensionContext) {
   async function updateDecorations(editor: vscode.TextEditor) {
     const document = editor.document;
 
-    // Skip output channels and non-code files
     if (
       document.uri.scheme !== "file" ||
       !document.fileName.match(/\.(tsx?|jsx?)$/)
@@ -27,107 +20,135 @@ export async function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    outputChannel.appendLine(`\n--- Processing: ${document.fileName} ---`);
-
     const decorations: vscode.DecorationOptions[] = [];
     const positions = findTemplateLiteralPositions(document);
+    const templateGroups = new Map<string, typeof positions>();
 
-    outputChannel.appendLine(`Found ${positions.length} template literals`);
+    positions.forEach((pos) => {
+      const key = `${pos.lineEndPosition.line}:${pos.lineEndPosition.character}`;
+      if (!templateGroups.has(key)) {
+        templateGroups.set(key, []);
+      }
+      templateGroups.get(key)!.push(pos);
+    });
 
-    for (const pos of positions) {
-      const quickInfo = await vscode.commands.executeCommand<vscode.Hover[]>(
-        "vscode.executeHoverProvider",
-        document.uri,
-        pos.variablePosition
-      );
+    for (const group of templateGroups.values()) {
+      const variableValues = new Map<string, string[]>();
 
-      if (quickInfo && quickInfo.length > 0) {
-        const hoverText = quickInfo[0].contents
-          .map((c) => (typeof c === "string" ? c : c.value))
-          .join("\n");
+      for (const pos of group) {
+        const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+          "vscode.executeHoverProvider",
+          document.uri,
+          pos.variablePosition
+        );
 
-        // Extract enum values from hover text
-        const enumValues = extractEnumFromHoverText(hoverText);
+        if (hovers?.length) {
+          const hoverText = hovers[0].contents
+            .map((c) => (typeof c === "string" ? c : c.value))
+            .join("\n");
 
-        if (enumValues.length > 0) {
-          outputChannel.appendLine(
-            `  ✓ Found values: ${enumValues.join(", ")}`
-          );
+          const enumValues = extractEnumFromHover(hoverText);
 
-          const decoration: vscode.DecorationOptions = {
-            range: new vscode.Range(pos.lineEndPosition, pos.lineEndPosition),
-            renderOptions: {
-              after: {
-                contentText: ` // ${enumValues.join(", ")}`,
-              },
-            },
-          };
+          if (enumValues.length > 0) {
+            const varName = pos.templateParts.find(
+              (p) =>
+                p.type === "variable" &&
+                p.position?.line === pos.variablePosition.line &&
+                p.position?.character === pos.variablePosition.character
+            )?.value;
 
-          decorations.push(decoration);
+            if (varName) {
+              variableValues.set(varName, enumValues);
+            }
+          }
         }
+      }
+
+      if (variableValues.size > 0) {
+        const allKeys = generateCombinations(
+          group[0].templateParts,
+          variableValues
+        );
+
+        decorations.push({
+          range: new vscode.Range(
+            group[0].lineEndPosition,
+            group[0].lineEndPosition
+          ),
+          renderOptions: {
+            after: { contentText: ` // ${allKeys.join(", ")}` },
+          },
+        });
       }
     }
 
-    outputChannel.appendLine(`Applied ${decorations.length} decorations`);
     editor.setDecorations(decorationType, decorations);
   }
 
-  function extractEnumFromHoverText(hoverText: string): string[] {
-    // Match patterns like: "OKX" | "BINANCE" | "BITGET"
-    const unionMatch = hoverText.match(/"([^"]+)"(?:\s*\|\s*"([^"]+)")*/g);
-
-    if (unionMatch) {
-      const values = unionMatch
-        .map((s) => s.replace(/"/g, "").trim())
-        .filter((v) => v !== "|");
-
-      return values;
+  function extractEnumFromHover(hoverText: string): string[] {
+    const codeMatch = hoverText.match(/```typescript\n([\s\S]*?)\n```/);
+    if (!codeMatch) {
+      return [];
     }
 
-    return [];
+    const matches = codeMatch[1].match(/"([^"]+)"/g);
+    return matches ? matches.map((m) => m.replace(/"/g, "")) : [];
   }
 
   function findTemplateLiteralPositions(document: vscode.TextDocument) {
     const positions: Array<{
       variablePosition: vscode.Position;
       lineEndPosition: vscode.Position;
+      templateParts: Array<{
+        type: "static" | "variable";
+        value: string;
+        position?: vscode.Position;
+      }>;
     }> = [];
 
-    const text = document.getText();
     const sourceFile = ts.createSourceFile(
       document.fileName,
-      text,
+      document.getText(),
       ts.ScriptTarget.Latest,
       true
     );
 
     function visit(node: ts.Node) {
       if (ts.isTemplateExpression(node)) {
-        node.templateSpans.forEach((span) => {
-          const expression = span.expression;
+        const templateParts: (typeof positions)[0]["templateParts"] = [];
 
-          if (ts.isIdentifier(expression)) {
+        templateParts.push({ type: "static", value: node.head.text });
+
+        node.templateSpans.forEach((span) => {
+          if (ts.isIdentifier(span.expression)) {
             const start = sourceFile.getLineAndCharacterOfPosition(
-              expression.getStart()
+              span.expression.getStart()
             );
+            templateParts.push({
+              type: "variable",
+              value: span.expression.text,
+              position: new vscode.Position(start.line, start.character),
+            });
+          }
+          templateParts.push({ type: "static", value: span.literal.text });
+        });
+
+        templateParts.forEach((part) => {
+          if (part.type === "variable" && part.position) {
             const lineEnd = sourceFile.getLineAndCharacterOfPosition(
               node.getEnd()
             );
-
             positions.push({
-              variablePosition: new vscode.Position(
-                start.line,
-                start.character
-              ),
+              variablePosition: part.position,
               lineEndPosition: new vscode.Position(
                 lineEnd.line,
                 lineEnd.character
               ),
+              templateParts,
             });
           }
         });
       }
-
       ts.forEachChild(node, visit);
     }
 
@@ -135,39 +156,54 @@ export async function activate(context: vscode.ExtensionContext) {
     return positions;
   }
 
+  function generateCombinations(
+    templateParts: Array<{ type: "static" | "variable"; value: string }>,
+    variableValues: Map<string, string[]>
+  ): string[] {
+    const results: string[] = [];
+
+    function generate(index: number, current: string) {
+      if (index >= templateParts.length) {
+        results.push(current);
+        return;
+      }
+
+      const part = templateParts[index];
+
+      if (part.type === "static") {
+        generate(index + 1, current + part.value);
+      } else {
+        const values = variableValues.get(part.value) || [part.value];
+        values.forEach((value) => generate(index + 1, current + value));
+      }
+    }
+
+    generate(0, "");
+    return results;
+  }
+
   let activeEditor = vscode.window.activeTextEditor;
+  let timeout: NodeJS.Timeout | undefined;
+
   if (activeEditor) {
     updateDecorations(activeEditor);
   }
 
-  // Debounce text changes
-  let timeout: NodeJS.Timeout | undefined;
-
-  vscode.window.onDidChangeActiveTextEditor(
-    (editor) => {
-      activeEditor = editor;
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor) {
+        activeEditor = editor;
         updateDecorations(editor);
       }
-    },
-    null,
-    context.subscriptions
-  );
+    }),
 
-  vscode.workspace.onDidChangeTextDocument(
-    (event) => {
-      if (activeEditor && event.document === activeEditor.document) {
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (activeEditor?.document === event.document) {
         clearTimeout(timeout);
         timeout = setTimeout(() => updateDecorations(activeEditor!), 500);
       }
-    },
-    null,
-    context.subscriptions
+    })
   );
 }
 
-export function deactivate() {
-  if (outputChannel) {
-    outputChannel.dispose();
-  }
-}
+export function deactivate() {}
