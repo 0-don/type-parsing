@@ -104,14 +104,12 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   function extractEnumFromHoverText(hoverText: string): string[] {
-    // Extract only the typescript code block
     const codeMatch = hoverText.match(/```typescript\n([\s\S]*?)\n```/);
 
     if (!codeMatch) {
       return [];
     }
 
-    // Now extract quoted strings only from the type annotation
     const matches = codeMatch[1].match(/"([^"]+)"/g);
 
     if (matches) {
@@ -217,8 +215,14 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   let activeEditor = vscode.window.activeTextEditor;
+
+  // Trigger initial decoration with a delay to ensure language server is ready
   if (activeEditor) {
-    updateDecorations(activeEditor);
+    setTimeout(() => {
+      if (activeEditor) {
+        updateDecorations(activeEditor);
+      }
+    }, 1000);
   }
 
   let timeout: NodeJS.Timeout | undefined;
@@ -227,7 +231,12 @@ export async function activate(context: vscode.ExtensionContext) {
     (editor) => {
       activeEditor = editor;
       if (editor) {
-        updateDecorations(editor);
+        // Add delay for language server to be ready
+        setTimeout(() => {
+          if (activeEditor === editor) {
+            updateDecorations(editor);
+          }
+        }, 500);
       }
     },
     null,
