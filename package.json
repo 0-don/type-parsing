@@ -1,8 +1,6 @@
 {
   "name": "type-parsing",
-  "displayName": "Code Collector",
-  "description": "Gather code context for AI based on imports",
-  "version": "0.0.54",
+  "version": "0.0.1",
   "publisher": "0-don",
   "repository": {
     "type": "git",
@@ -14,7 +12,12 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact"
+  ],
   "main": "./dist/extension.js",
   "scripts": {
     "vscode:prepublish": "npm run package",
