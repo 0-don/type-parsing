@@ -183,7 +183,11 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     // Fallback strategies
-    const localValues = resolveFromLocalScope(varExpression, sourceFile);
+    const localValues = await resolveFromLocalScope(
+      varExpression,
+      sourceFile,
+      document
+    );
     if (localValues.length > 0) {
       return localValues;
     }
@@ -232,6 +236,8 @@ export async function activate(context: vscode.ExtensionContext) {
             );
 
             let typeDecl = findDeclarationInFile(sourceFile, typeName);
+            let typeDeclSourceFile = sourceFile;
+            let typeDeclDocument = document;
 
             if (!typeDecl) {
               // Try to find in imports
@@ -252,12 +258,20 @@ export async function activate(context: vscode.ExtensionContext) {
                     importedSourceFile,
                     typeName
                   );
+                  if (typeDecl) {
+                    typeDeclSourceFile = importedSourceFile;
+                    typeDeclDocument = importedDoc;
+                  }
                 }
               }
             }
 
             if (typeDecl) {
-              const values = extractValuesFromDeclaration(typeDecl, sourceFile);
+              const values = await extractValuesFromDeclaration(
+                typeDecl,
+                typeDeclSourceFile,
+                typeDeclDocument
+              );
               if (values.length > 0) {
                 return values;
               }
@@ -333,7 +347,7 @@ export async function activate(context: vscode.ExtensionContext) {
         return [];
       }
 
-      return extractValuesFromNode(node, sourceFile);
+      return await extractValuesFromNode(node, sourceFile, doc);
     } catch (error) {
       console.error("[TypeParsing] Extract from type location failed:", error);
       return [];
@@ -368,8 +382,42 @@ export async function activate(context: vscode.ExtensionContext) {
     const parts = expression.split(".");
     const objectName = parts[0];
 
-    // Find the object declaration
-    const objectDecl = findDeclarationInFile(sourceFile, objectName);
+    // Find the object declaration - first in local file, then in imports
+    let objectDecl = findDeclarationInFile(sourceFile, objectName);
+    let objectSourceFile = sourceFile;
+    let objectDocument = document;
+
+    if (!objectDecl) {
+      // Try to find in imports
+      const importDecl = findImportDeclaration(sourceFile, objectName);
+      if (importDecl) {
+        const importPath = resolveImportPath(importDecl, document);
+        if (importPath) {
+          try {
+            const importedDoc = await vscode.workspace.openTextDocument(
+              importPath
+            );
+            const importedSourceFile = ts.createSourceFile(
+              importedDoc.fileName,
+              importedDoc.getText(),
+              ts.ScriptTarget.Latest,
+              true
+            );
+            objectDecl = findExportedDeclaration(
+              importedSourceFile,
+              objectName
+            );
+            if (objectDecl) {
+              objectSourceFile = importedSourceFile;
+              objectDocument = importedDoc;
+            }
+          } catch (error) {
+            console.error("[TypeParsing] Import resolution failed:", error);
+          }
+        }
+      }
+    }
+
     if (
       !objectDecl ||
       !ts.isVariableDeclaration(objectDecl) ||
@@ -381,13 +429,13 @@ export async function activate(context: vscode.ExtensionContext) {
     // Look for type annotation on the object declaration
     if (objectDecl.type) {
       // If there's an explicit type annotation, use that
-      const typeName = objectDecl.type.getText(sourceFile);
-      let typeDecl = findDeclarationInFile(sourceFile, typeName);
+      const typeName = objectDecl.type.getText(objectSourceFile);
+      let typeDecl = findDeclarationInFile(objectSourceFile, typeName);
 
       if (!typeDecl) {
-        const importDecl = findImportDeclaration(sourceFile, typeName);
+        const importDecl = findImportDeclaration(objectSourceFile, typeName);
         if (importDecl) {
-          const importPath = resolveImportPath(importDecl, document);
+          const importPath = resolveImportPath(importDecl, objectDocument);
           if (importPath) {
             const importedDoc = await vscode.workspace.openTextDocument(
               importPath
@@ -404,7 +452,11 @@ export async function activate(context: vscode.ExtensionContext) {
       }
 
       if (typeDecl) {
-        return extractValuesFromDeclaration(typeDecl, sourceFile);
+        return await extractValuesFromDeclaration(
+          typeDecl,
+          objectSourceFile,
+          objectDocument
+        );
       }
     }
 
@@ -419,7 +471,11 @@ export async function activate(context: vscode.ExtensionContext) {
       );
 
       if (property && ts.isPropertyAssignment(property)) {
-        return await resolvePropertyValue(property, sourceFile, document);
+        return await resolvePropertyValue(
+          property,
+          objectSourceFile,
+          objectDocument
+        );
       }
     }
 
@@ -435,6 +491,8 @@ export async function activate(context: vscode.ExtensionContext) {
     if (ts.isAsExpression(property.initializer)) {
       const typeName = property.initializer.type.getText(sourceFile);
       let typeDecl = findDeclarationInFile(sourceFile, typeName);
+      let typeDeclSourceFile = sourceFile;
+      let typeDeclDocument = document;
 
       if (!typeDecl) {
         try {
@@ -452,6 +510,10 @@ export async function activate(context: vscode.ExtensionContext) {
                 true
               );
               typeDecl = findExportedDeclaration(importedSourceFile, typeName);
+              if (typeDecl) {
+                typeDeclSourceFile = importedSourceFile;
+                typeDeclDocument = importedDoc;
+              }
             }
           }
         } catch (error) {
@@ -460,7 +522,11 @@ export async function activate(context: vscode.ExtensionContext) {
       }
 
       if (typeDecl) {
-        const typeValues = extractValuesFromDeclaration(typeDecl, sourceFile);
+        const typeValues = await extractValuesFromDeclaration(
+          typeDecl,
+          typeDeclSourceFile,
+          typeDeclDocument
+        );
         if (typeValues.length > 0) {
           return typeValues;
         }
@@ -478,7 +544,11 @@ export async function activate(context: vscode.ExtensionContext) {
         property.initializer.text
       );
       if (referencedDecl) {
-        return extractValuesFromDeclaration(referencedDecl, sourceFile);
+        return await extractValuesFromDeclaration(
+          referencedDecl,
+          sourceFile,
+          document
+        );
       }
     }
 
@@ -489,15 +559,20 @@ export async function activate(context: vscode.ExtensionContext) {
     return [];
   }
 
-  function resolveFromLocalScope(
+  async function resolveFromLocalScope(
     varName: string,
-    sourceFile: ts.SourceFile
-  ): string[] {
+    sourceFile: ts.SourceFile,
+    document: vscode.TextDocument
+  ): Promise<string[]> {
     const declaration = findDeclarationInFile(sourceFile, varName);
     if (!declaration) {
       return [];
     }
-    return extractValuesFromDeclaration(declaration, sourceFile);
+    return await extractValuesFromDeclaration(
+      declaration,
+      sourceFile,
+      document
+    );
   }
 
   async function resolveFromImports(
@@ -526,7 +601,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
       const exportedDecl = findExportedDeclaration(importedSourceFile, varName);
       if (exportedDecl) {
-        return extractValuesFromDeclaration(exportedDecl, importedSourceFile);
+        return await extractValuesFromDeclaration(
+          exportedDecl,
+          importedSourceFile,
+          importedDoc
+        );
       }
     } catch (error) {
       console.error("[TypeParsing] Import resolution failed:", error);
@@ -572,10 +651,11 @@ export async function activate(context: vscode.ExtensionContext) {
     return found;
   }
 
-  function extractValuesFromDeclaration(
+  async function extractValuesFromDeclaration(
     declaration: ts.Node,
-    sourceFile: ts.SourceFile
-  ): string[] {
+    sourceFile: ts.SourceFile,
+    document?: vscode.TextDocument
+  ): Promise<string[]> {
     if (ts.isEnumDeclaration(declaration)) {
       return declaration.members.map((member) =>
         member.initializer && ts.isStringLiteral(member.initializer)
@@ -600,15 +680,61 @@ export async function activate(context: vscode.ExtensionContext) {
           .map((prop) => prop.name.getText(sourceFile).replace(/"/g, ""));
       }
 
-      if (ts.isStringLiteral(declaration.initializer)) {
-        return [declaration.initializer.text];
+      // For type assertions, try to resolve the type first
+      if (ts.isAsExpression(declaration.initializer)) {
+        const typeName = declaration.initializer.type.getText(sourceFile);
+        let typeDecl = findDeclarationInFile(sourceFile, typeName);
+
+        // If type not found in current file, try to find it in imports
+        if (!typeDecl && document) {
+          try {
+            const importDecl = findImportDeclaration(sourceFile, typeName);
+            if (importDecl) {
+              const importPath = resolveImportPath(importDecl, document);
+              if (importPath) {
+                const importedDoc = await vscode.workspace.openTextDocument(
+                  importPath
+                );
+                const importedSourceFile = ts.createSourceFile(
+                  importedDoc.fileName,
+                  importedDoc.getText(),
+                  ts.ScriptTarget.Latest,
+                  true
+                );
+                typeDecl = findExportedDeclaration(
+                  importedSourceFile,
+                  typeName
+                );
+              }
+            }
+          } catch (error) {
+            console.error(
+              "[TypeParsing] Type import resolution failed:",
+              error
+            );
+          }
+        }
+
+        // If we found the type declaration, extract values from it
+        if (typeDecl) {
+          const typeValues = await extractValuesFromDeclaration(
+            typeDecl,
+            typeDecl.getSourceFile?.() || sourceFile,
+            document
+          );
+          if (typeValues.length > 0) {
+            return typeValues;
+          }
+        }
+
+        // Fallback to the literal value if type resolution fails
+        if (ts.isStringLiteral(declaration.initializer.expression)) {
+          return [declaration.initializer.expression.text];
+        }
       }
 
-      if (
-        ts.isAsExpression(declaration.initializer) &&
-        ts.isStringLiteral(declaration.initializer.expression)
-      ) {
-        return [declaration.initializer.expression.text];
+      if (ts.isStringLiteral(declaration.initializer)) {
+        return [declaration.initializer.text];
       }
     }
 
@@ -619,10 +745,10 @@ export async function activate(context: vscode.ExtensionContext) {
     return [];
   }
 
-  function extractStringLiteralsFromType(
+  async function extractStringLiteralsFromType(
     typeNode: ts.TypeNode,
     sourceFile: ts.SourceFile
-  ): string[] {
+  ): Promise<string[]> {
     if (ts.isUnionTypeNode(typeNode)) {
       return typeNode.types
         .filter((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal))
@@ -641,7 +767,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (ts.isIdentifier(exprName)) {
         const objectDecl = findDeclarationInFile(sourceFile, exprName.text);
         if (objectDecl) {
-          return extractValuesFromDeclaration(objectDecl, sourceFile);
+          return await extractValuesFromDeclaration(objectDecl, sourceFile);
         }
       }
     }
@@ -649,14 +775,19 @@ export async function activate(context: vscode.ExtensionContext) {
     return [];
   }
 
-  function extractValuesFromNode(
+  async function extractValuesFromNode(
     node: ts.Node,
-    sourceFile: ts.SourceFile
-  ): string[] {
+    sourceFile: ts.SourceFile,
+    document: vscode.TextDocument
+  ): Promise<string[]> {
     let current: ts.Node | undefined = node;
 
     while (current) {
-      const values = extractValuesFromDeclaration(current, sourceFile);
+      const values = await extractValuesFromDeclaration(
+        current,
+        sourceFile,
+        document
+      );
       if (values.length > 0) {
         return values;
       }
