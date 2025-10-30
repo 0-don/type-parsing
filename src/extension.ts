@@ -1,4 +1,4 @@
-// src/extension.ts - Fixed version
+// src/extension.ts - Fixed to prioritize type over value
 import * as ts from "typescript";
 import * as vscode from "vscode";
 
@@ -150,30 +150,211 @@ export async function activate(context: vscode.ExtensionContext) {
     document: vscode.TextDocument,
     sourceFile: ts.SourceFile
   ): Promise<string[]> {
-    // Handle property access expressions (e.g., mockExchange.exchangeType)
+    // For property access, use a hybrid approach
     if (varExpression.includes(".")) {
-      return await resolvePropertyAccess(varExpression, sourceFile, document);
+      // First try to get type info from hover (which shows the actual type)
+      if (position) {
+        const hoverValues = await getTypeFromHover(document, position);
+        if (hoverValues.length > 0) {
+          return hoverValues;
+        }
+      }
+
+      // Fallback to manual property resolution
+      const propertyValues = await resolvePropertyAccess(
+        varExpression,
+        sourceFile,
+        document
+      );
+      if (propertyValues.length > 0) {
+        return propertyValues;
+      }
     }
 
-    // Rest of the function stays the same...
-    const strategies = [
-      () =>
+    // For simple variables, use language server first
+    if (position) {
+      const languageServerValues = await tryLanguageServerProviders(
+        document,
         position
-          ? tryLanguageServerProviders(document, position)
-          : Promise.resolve([]),
-      () => resolveFromLocalScope(varExpression, sourceFile),
-      () => resolveFromImports(varExpression, sourceFile, document),
-    ];
+      );
+      if (languageServerValues.length > 0) {
+        return languageServerValues;
+      }
+    }
 
-    for (const strategy of strategies) {
-      try {
-        const values = await strategy();
+    // Fallback strategies
+    const localValues = resolveFromLocalScope(varExpression, sourceFile);
+    if (localValues.length > 0) {
+      return localValues;
+    }
+
+    const importValues = await resolveFromImports(
+      varExpression,
+      sourceFile,
+      document
+    );
+    return importValues;
+  }
+
+  async function getTypeFromHover(
+    document: vscode.TextDocument,
+    position: vscode.Position
+  ): Promise<string[]> {
+    try {
+      const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+        "vscode.executeHoverProvider",
+        document.uri,
+        position
+      );
+
+      if (hovers?.length) {
+        const hoverText = hovers[0].contents
+          .map((c) => (typeof c === "string" ? c : c.value))
+          .join("\n");
+
+        // Look for type annotations like: (property) exchangeType: ExchangeTypeUnion
+        const typeMatch = hoverText.match(/:\s*(\w+)/);
+        if (typeMatch) {
+          const typeName = typeMatch[1];
+
+          // If it's a union or enum type, try to resolve it
+          if (
+            typeName.includes("Union") ||
+            typeName.includes("Enum") ||
+            typeName.includes("Type")
+          ) {
+            // Look for the type definition in current file or imports
+            const sourceFile = ts.createSourceFile(
+              document.fileName,
+              document.getText(),
+              ts.ScriptTarget.Latest,
+              true
+            );
+
+            let typeDecl = findDeclarationInFile(sourceFile, typeName);
+
+            if (!typeDecl) {
+              // Try to find in imports
+              const importDecl = findImportDeclaration(sourceFile, typeName);
+              if (importDecl) {
+                const importPath = resolveImportPath(importDecl, document);
+                if (importPath) {
+                  const importedDoc = await vscode.workspace.openTextDocument(
+                    importPath
+                  );
+                  const importedSourceFile = ts.createSourceFile(
+                    importedDoc.fileName,
+                    importedDoc.getText(),
+                    ts.ScriptTarget.Latest,
+                    true
+                  );
+                  typeDecl = findExportedDeclaration(
+                    importedSourceFile,
+                    typeName
+                  );
+                }
+              }
+            }
+
+            if (typeDecl) {
+              const values = extractValuesFromDeclaration(typeDecl, sourceFile);
+              if (values.length > 0) {
+                return values;
+              }
+            }
+          }
+        }
+
+        // Fallback to parsing union types directly from hover
+        return parseHoverForUnionTypes(hovers[0]);
+      }
+    } catch (error) {
+      console.error("[TypeParsing] Hover type resolution failed:", error);
+    }
+
+    return [];
+  }
+
+  async function tryLanguageServerProviders(
+    document: vscode.TextDocument,
+    position: vscode.Position
+  ): Promise<string[]> {
+    try {
+      // Try type definition provider first
+      const typeDefs = await vscode.commands.executeCommand<vscode.Location[]>(
+        "vscode.executeTypeDefinitionProvider",
+        document.uri,
+        position
+      );
+
+      if (typeDefs?.[0]) {
+        const values = await extractValuesFromTypeLocation(typeDefs[0]);
         if (values.length > 0) {
           return values;
         }
-      } catch (error) {
-        console.error("[TypeParsing] Strategy failed:", error);
       }
+
+      // Try definition provider as fallback
+      const definitions = await vscode.commands.executeCommand<
+        vscode.Location[]
+      >("vscode.executeDefinitionProvider", document.uri, position);
+
+      if (definitions?.[0]) {
+        const values = await extractValuesFromTypeLocation(definitions[0]);
+        if (values.length > 0) {
+          return values;
+        }
+      }
+    } catch (error) {
+      console.error("[TypeParsing] Language server error:", error);
+    }
+
+    return [];
+  }
+
+  async function extractValuesFromTypeLocation(
+    location: vscode.Location
+  ): Promise<string[]> {
+    try {
+      const doc = await vscode.workspace.openTextDocument(location.uri);
+      const sourceFile = ts.createSourceFile(
+        doc.fileName,
+        doc.getText(),
+        ts.ScriptTarget.Latest,
+        true
+      );
+
+      const node = findNodeAtPosition(
+        sourceFile,
+        doc.offsetAt(location.range.start)
+      );
+
+      if (!node) {
+        return [];
+      }
+
+      return extractValuesFromNode(node, sourceFile);
+    } catch (error) {
+      console.error("[TypeParsing] Extract from type location failed:", error);
+      return [];
+    }
+  }
+
+  function parseHoverForUnionTypes(hover: vscode.Hover): string[] {
+    const hoverText = hover.contents
+      .map((c) => (typeof c === "string" ? c : c.value))
+      .join("\n");
+
+    // Look for union type patterns like: "MEXC" | "BYBIT" | "PHEMEX"
+    const unionMatches = Array.from(hoverText.matchAll(/"([^"]+)"/g));
+    if (unionMatches.length > 1) {
+      return unionMatches.map((match) => match[1]);
+    }
+
+    // Look for single string literal type
+    const singleLiteralMatch = hoverText.match(/:\s*"([^"]+)"/);
+    if (singleLiteralMatch) {
+      return [singleLiteralMatch[1]];
     }
 
     return [];
@@ -186,137 +367,123 @@ export async function activate(context: vscode.ExtensionContext) {
   ): Promise<string[]> {
     const parts = expression.split(".");
     const objectName = parts[0];
-    const propertyName = parts[1];
 
     // Find the object declaration
     const objectDecl = findDeclarationInFile(sourceFile, objectName);
-    if (!objectDecl) {
+    if (
+      !objectDecl ||
+      !ts.isVariableDeclaration(objectDecl) ||
+      !objectDecl.initializer
+    ) {
       return [];
     }
 
-    // Extract the property value and type
-    if (ts.isVariableDeclaration(objectDecl) && objectDecl.initializer) {
-      if (ts.isObjectLiteralExpression(objectDecl.initializer)) {
-        const property = objectDecl.initializer.properties.find(
-          (prop) =>
-            ts.isPropertyAssignment(prop) &&
-            ts.isIdentifier(prop.name) &&
-            prop.name.text === propertyName
-        );
+    // Look for type annotation on the object declaration
+    if (objectDecl.type) {
+      // If there's an explicit type annotation, use that
+      const typeName = objectDecl.type.getText(sourceFile);
+      let typeDecl = findDeclarationInFile(sourceFile, typeName);
 
-        if (property && ts.isPropertyAssignment(property)) {
-          // If it's a type assertion (as ExchangeTypeEnum), resolve the type
-          if (ts.isAsExpression(property.initializer)) {
-            const typeName = property.initializer.type.getText(sourceFile);
-
-            // First try to find it in the current file
-            let typeDecl = findDeclarationInFile(sourceFile, typeName);
-
-            // If not found locally, try to resolve from imports
-            if (!typeDecl) {
-              try {
-                const importDecl = findImportDeclaration(sourceFile, typeName);
-                if (importDecl) {
-                  const importPath = resolveImportPath(importDecl, document);
-                  if (importPath) {
-                    const importedDoc = await vscode.workspace.openTextDocument(
-                      importPath
-                    );
-                    const importedSourceFile = ts.createSourceFile(
-                      importedDoc.fileName,
-                      importedDoc.getText(),
-                      ts.ScriptTarget.Latest,
-                      true
-                    );
-                    typeDecl = findExportedDeclaration(
-                      importedSourceFile,
-                      typeName
-                    );
-                  }
-                }
-              } catch (error) {
-                console.error("[TypeParsing] Import resolution failed:", error);
-              }
-            }
-
-            if (typeDecl) {
-              const typeValues = extractValuesFromDeclaration(
-                typeDecl,
-                sourceFile
-              );
-              if (typeValues.length > 0) {
-                return typeValues;
-              }
-            }
-
-            // Fallback to the actual value if type resolution fails
-            if (ts.isStringLiteral(property.initializer.expression)) {
-              return [property.initializer.expression.text];
-            }
-          }
-
-          // Handle direct string literals
-          if (ts.isStringLiteral(property.initializer)) {
-            return [property.initializer.text];
-          }
-
-          // Handle identifiers that reference other variables/enums
-          if (ts.isIdentifier(property.initializer)) {
-            const referencedDecl = findDeclarationInFile(
-              sourceFile,
-              property.initializer.text
+      if (!typeDecl) {
+        const importDecl = findImportDeclaration(sourceFile, typeName);
+        if (importDecl) {
+          const importPath = resolveImportPath(importDecl, document);
+          if (importPath) {
+            const importedDoc = await vscode.workspace.openTextDocument(
+              importPath
             );
-            if (referencedDecl) {
-              return extractValuesFromDeclaration(referencedDecl, sourceFile);
-            }
+            const importedSourceFile = ts.createSourceFile(
+              importedDoc.fileName,
+              importedDoc.getText(),
+              ts.ScriptTarget.Latest,
+              true
+            );
+            typeDecl = findExportedDeclaration(importedSourceFile, typeName);
           }
         }
+      }
+
+      if (typeDecl) {
+        return extractValuesFromDeclaration(typeDecl, sourceFile);
+      }
+    }
+
+    // Fallback to examining the property itself
+    if (ts.isObjectLiteralExpression(objectDecl.initializer)) {
+      const propertyName = parts[1];
+      const property = objectDecl.initializer.properties.find(
+        (prop) =>
+          ts.isPropertyAssignment(prop) &&
+          ts.isIdentifier(prop.name) &&
+          prop.name.text === propertyName
+      );
+
+      if (property && ts.isPropertyAssignment(property)) {
+        return await resolvePropertyValue(property, sourceFile, document);
       }
     }
 
     return [];
   }
 
-  async function tryLanguageServerProviders(
-    document: vscode.TextDocument,
-    position: vscode.Position
+  async function resolvePropertyValue(
+    property: ts.PropertyAssignment,
+    sourceFile: ts.SourceFile,
+    document: vscode.TextDocument
   ): Promise<string[]> {
-    try {
-      // Try definition provider
-      const definitions = await vscode.commands.executeCommand<
-        vscode.Location[]
-      >("vscode.executeDefinitionProvider", document.uri, position);
-      if (definitions?.[0]) {
-        const values = await extractFromLocation(definitions[0]);
-        if (values.length > 0) {
-          return values;
+    // For type assertions (as ExchangeTypeEnum), always prioritize the type
+    if (ts.isAsExpression(property.initializer)) {
+      const typeName = property.initializer.type.getText(sourceFile);
+      let typeDecl = findDeclarationInFile(sourceFile, typeName);
+
+      if (!typeDecl) {
+        try {
+          const importDecl = findImportDeclaration(sourceFile, typeName);
+          if (importDecl) {
+            const importPath = resolveImportPath(importDecl, document);
+            if (importPath) {
+              const importedDoc = await vscode.workspace.openTextDocument(
+                importPath
+              );
+              const importedSourceFile = ts.createSourceFile(
+                importedDoc.fileName,
+                importedDoc.getText(),
+                ts.ScriptTarget.Latest,
+                true
+              );
+              typeDecl = findExportedDeclaration(importedSourceFile, typeName);
+            }
+          }
+        } catch (error) {
+          console.error("[TypeParsing] Import resolution failed:", error);
         }
       }
 
-      // Try type definition provider
-      const typeDefs = await vscode.commands.executeCommand<vscode.Location[]>(
-        "vscode.executeTypeDefinitionProvider",
-        document.uri,
-        position
-      );
-      if (typeDefs?.[0]) {
-        const values = await extractFromLocation(typeDefs[0]);
-        if (values.length > 0) {
-          return values;
+      if (typeDecl) {
+        const typeValues = extractValuesFromDeclaration(typeDecl, sourceFile);
+        if (typeValues.length > 0) {
+          return typeValues;
         }
       }
 
-      // Try hover provider
-      const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
-        "vscode.executeHoverProvider",
-        document.uri,
-        position
-      );
-      if (hovers?.length) {
-        return parseHoverForValues(hovers[0]);
+      // Only fallback to actual value if type resolution fails
+      if (ts.isStringLiteral(property.initializer.expression)) {
+        return [property.initializer.expression.text];
       }
-    } catch (error) {
-      console.error("[TypeParsing] Language server error:", error);
+    }
+
+    if (ts.isIdentifier(property.initializer)) {
+      const referencedDecl = findDeclarationInFile(
+        sourceFile,
+        property.initializer.text
+      );
+      if (referencedDecl) {
+        return extractValuesFromDeclaration(referencedDecl, sourceFile);
+      }
+    }
+
+    if (ts.isStringLiteral(property.initializer)) {
+      return [property.initializer.text];
     }
 
     return [];
@@ -330,7 +497,6 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!declaration) {
       return [];
     }
-
     return extractValuesFromDeclaration(declaration, sourceFile);
   }
 
@@ -339,7 +505,6 @@ export async function activate(context: vscode.ExtensionContext) {
     sourceFile: ts.SourceFile,
     document: vscode.TextDocument
   ): Promise<string[]> {
-    // Find import for the variable
     const importDecl = findImportDeclaration(sourceFile, varName);
     if (!importDecl) {
       return [];
@@ -381,7 +546,6 @@ export async function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      // Variable declarations
       if (
         ts.isVariableDeclaration(node) &&
         ts.isIdentifier(node.name) &&
@@ -391,13 +555,11 @@ export async function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      // Enum declarations
       if (ts.isEnumDeclaration(node) && node.name.text === name) {
         found = node;
         return;
       }
 
-      // Type alias declarations
       if (ts.isTypeAliasDeclaration(node) && node.name.text === name) {
         found = node;
         return;
@@ -414,7 +576,6 @@ export async function activate(context: vscode.ExtensionContext) {
     declaration: ts.Node,
     sourceFile: ts.SourceFile
   ): string[] {
-    // Handle enums
     if (ts.isEnumDeclaration(declaration)) {
       return declaration.members.map((member) =>
         member.initializer && ts.isStringLiteral(member.initializer)
@@ -423,31 +584,26 @@ export async function activate(context: vscode.ExtensionContext) {
       );
     }
 
-    // Handle variable declarations
     if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
-      // Object literals
       if (ts.isObjectLiteralExpression(declaration.initializer)) {
         return declaration.initializer.properties
           .filter(ts.isPropertyAssignment)
-          .map((prop) => prop.name.getText(sourceFile));
+          .map((prop) => prop.name.getText(sourceFile).replace(/"/g, ""));
       }
 
-      // As expressions (const assertions)
       if (
         ts.isAsExpression(declaration.initializer) &&
         ts.isObjectLiteralExpression(declaration.initializer.expression)
       ) {
         return declaration.initializer.expression.properties
           .filter(ts.isPropertyAssignment)
-          .map((prop) => prop.name.getText(sourceFile));
+          .map((prop) => prop.name.getText(sourceFile).replace(/"/g, ""));
       }
 
-      // String literals
       if (ts.isStringLiteral(declaration.initializer)) {
         return [declaration.initializer.text];
       }
 
-      // As expressions with string literals
       if (
         ts.isAsExpression(declaration.initializer) &&
         ts.isStringLiteral(declaration.initializer.expression)
@@ -456,7 +612,6 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    // Handle type aliases
     if (ts.isTypeAliasDeclaration(declaration)) {
       return extractStringLiteralsFromType(declaration.type, sourceFile);
     }
@@ -494,6 +649,23 @@ export async function activate(context: vscode.ExtensionContext) {
     return [];
   }
 
+  function extractValuesFromNode(
+    node: ts.Node,
+    sourceFile: ts.SourceFile
+  ): string[] {
+    let current: ts.Node | undefined = node;
+
+    while (current) {
+      const values = extractValuesFromDeclaration(current, sourceFile);
+      if (values.length > 0) {
+        return values;
+      }
+      current = current.parent;
+    }
+
+    return [];
+  }
+
   function findImportDeclaration(
     sourceFile: ts.SourceFile,
     varName: string
@@ -525,7 +697,6 @@ export async function activate(context: vscode.ExtensionContext) {
     const importPath = importDecl.moduleSpecifier.text;
     const documentDir = vscode.Uri.joinPath(document.uri, "..");
 
-    // Handle relative imports
     if (importPath.startsWith("./") || importPath.startsWith("../")) {
       const resolvedPath = vscode.Uri.joinPath(documentDir, importPath + ".ts");
       return resolvedPath;
@@ -539,7 +710,6 @@ export async function activate(context: vscode.ExtensionContext) {
     name: string
   ): ts.Node | undefined {
     for (const statement of sourceFile.statements) {
-      // Named exports
       if (
         ts.isExportDeclaration(statement) &&
         statement.exportClause &&
@@ -553,7 +723,6 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      // Export declarations
       if (hasExportModifier(statement)) {
         if (ts.isVariableStatement(statement)) {
           const decl = statement.declarationList.declarations.find(
@@ -575,7 +744,6 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    // Also check non-exported declarations
     return findDeclarationInFile(sourceFile, name);
   }
 
@@ -591,64 +759,6 @@ export async function activate(context: vscode.ExtensionContext) {
     );
   }
 
-  function parseHoverForValues(hover: vscode.Hover): string[] {
-    const hoverText = hover.contents
-      .map((c) => (typeof c === "string" ? c : c.value))
-      .join("\n");
-
-    const patterns = [
-      /```typescript\n([\s\S]*?)\n```/,
-      /```ts\n([\s\S]*?)\n```/,
-      /\(parameter\) \w+: "([^"]+)"/g,
-      /"([^"]+)"/g,
-    ];
-
-    for (const pattern of patterns) {
-      const matches = hoverText.match(pattern);
-      if (matches) {
-        const literals = Array.from(hoverText.matchAll(/"([^"]+)"/g)).map(
-          (match) => match[1]
-        );
-        if (literals.length > 1) {
-          return literals;
-        }
-      }
-    }
-
-    return [];
-  }
-
-  async function extractFromLocation(
-    location: vscode.Location
-  ): Promise<string[]> {
-    if (!location.uri || !location.range) {
-      return [];
-    }
-
-    try {
-      const doc = await vscode.workspace.openTextDocument(location.uri);
-      const sourceFile = ts.createSourceFile(
-        doc.fileName,
-        doc.getText(),
-        ts.ScriptTarget.Latest,
-        true
-      );
-
-      const node = findNodeAtPosition(
-        sourceFile,
-        doc.offsetAt(location.range.start)
-      );
-      if (!node) {
-        return [];
-      }
-
-      return extractValuesFromNode(node, sourceFile);
-    } catch (error) {
-      console.error("[TypeParsing] Extract from location failed:", error);
-      return [];
-    }
-  }
-
   function findNodeAtPosition(
     sourceFile: ts.SourceFile,
     position: number
@@ -659,23 +769,6 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }
     return find(sourceFile);
-  }
-
-  function extractValuesFromNode(
-    node: ts.Node,
-    sourceFile: ts.SourceFile
-  ): string[] {
-    let current: ts.Node | undefined = node;
-
-    while (current) {
-      const values = extractValuesFromDeclaration(current, sourceFile);
-      if (values.length > 0) {
-        return values;
-      }
-      current = current.parent;
-    }
-
-    return [];
   }
 
   function findTemplateLiterals(document: vscode.TextDocument) {
@@ -712,26 +805,11 @@ export async function activate(context: vscode.ExtensionContext) {
           );
           const position = new vscode.Position(start.line, start.character);
 
-          if (ts.isIdentifier(span.expression)) {
-            templateParts.push({
-              type: "variable",
-              value: span.expression.text,
-              position,
-            });
-          } else if (ts.isPropertyAccessExpression(span.expression)) {
-            templateParts.push({
-              type: "variable",
-              value: span.expression.getText(sourceFile),
-              position,
-            });
-          } else {
-            // Fallback for other expression types
-            templateParts.push({
-              type: "variable",
-              value: span.expression.getText(sourceFile),
-              position,
-            });
-          }
+          templateParts.push({
+            type: "variable",
+            value: span.expression.getText(sourceFile),
+            position,
+          });
 
           templateParts.push({ type: "static", value: span.literal.text });
         });
@@ -783,7 +861,6 @@ export async function activate(context: vscode.ExtensionContext) {
             generate(index + 1, current + value);
           }
         } else {
-          // If no values found, use the variable name as placeholder
           generate(index + 1, current + `{${part.value}}`);
         }
       }
