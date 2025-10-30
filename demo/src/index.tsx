@@ -6,9 +6,9 @@ import {
   exchangeTypeUnion,
   mockEvent,
   mockExchange,
-} from "./mock";
-import { t } from "./t";
-import { ExchangeTypeEnum } from "./types";
+} from "./mock.js";
+import { t } from "./t.js";
+import { ExchangeTypeEnum } from "./types.js";
 
 // Test all exchange types in various contexts
 t(`EXCHANGE.${exchangeType}.FEATURES.ADVANCED_TRADING`);

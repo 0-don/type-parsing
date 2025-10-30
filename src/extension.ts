@@ -243,7 +243,7 @@ export async function activate(context: vscode.ExtensionContext) {
               // Try to find in imports
               const importDecl = findImportDeclaration(sourceFile, typeName);
               if (importDecl) {
-                const importPath = resolveImportPath(importDecl, document);
+                const importPath = await resolveImportPath(importDecl, document);
                 if (importPath) {
                   const importedDoc = await vscode.workspace.openTextDocument(
                     importPath
@@ -327,10 +327,18 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   async function extractValuesFromTypeLocation(
-    location: vscode.Location
+    location: vscode.Location | vscode.LocationLink
   ): Promise<string[]> {
     try {
-      const doc = await vscode.workspace.openTextDocument(location.uri);
+      // Handle both Location and LocationLink
+      const uri = 'uri' in location ? location.uri : location.targetUri;
+      const range = 'range' in location ? location.range : location.targetRange;
+
+      if (!uri || !range) {
+        return [];
+      }
+
+      const doc = await vscode.workspace.openTextDocument(uri);
       const sourceFile = ts.createSourceFile(
         doc.fileName,
         doc.getText(),
@@ -340,7 +348,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
       const node = findNodeAtPosition(
         sourceFile,
-        doc.offsetAt(location.range.start)
+        doc.offsetAt(range.start)
       );
 
       if (!node) {
@@ -391,7 +399,7 @@ export async function activate(context: vscode.ExtensionContext) {
       // Try to find in imports
       const importDecl = findImportDeclaration(sourceFile, objectName);
       if (importDecl) {
-        const importPath = resolveImportPath(importDecl, document);
+        const importPath = await resolveImportPath(importDecl, document);
         if (importPath) {
           try {
             const importedDoc = await vscode.workspace.openTextDocument(
@@ -435,7 +443,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (!typeDecl) {
         const importDecl = findImportDeclaration(objectSourceFile, typeName);
         if (importDecl) {
-          const importPath = resolveImportPath(importDecl, objectDocument);
+          const importPath = await resolveImportPath(importDecl, objectDocument);
           if (importPath) {
             const importedDoc = await vscode.workspace.openTextDocument(
               importPath
@@ -498,7 +506,7 @@ export async function activate(context: vscode.ExtensionContext) {
         try {
           const importDecl = findImportDeclaration(sourceFile, typeName);
           if (importDecl) {
-            const importPath = resolveImportPath(importDecl, document);
+            const importPath = await resolveImportPath(importDecl, document);
             if (importPath) {
               const importedDoc = await vscode.workspace.openTextDocument(
                 importPath
@@ -586,7 +594,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     try {
-      const importPath = resolveImportPath(importDecl, document);
+      const importPath = await resolveImportPath(importDecl, document);
       if (!importPath) {
         return [];
       }
@@ -690,7 +698,7 @@ export async function activate(context: vscode.ExtensionContext) {
           try {
             const importDecl = findImportDeclaration(sourceFile, typeName);
             if (importDecl) {
-              const importPath = resolveImportPath(importDecl, document);
+              const importPath = await resolveImportPath(importDecl, document);
               if (importPath) {
                 const importedDoc = await vscode.workspace.openTextDocument(
                   importPath
@@ -817,10 +825,10 @@ export async function activate(context: vscode.ExtensionContext) {
     return undefined;
   }
 
-  function resolveImportPath(
+  async function resolveImportPath(
     importDecl: ts.ImportDeclaration,
     document: vscode.TextDocument
-  ): vscode.Uri | undefined {
+  ): Promise<vscode.Uri | undefined> {
     if (!ts.isStringLiteral(importDecl.moduleSpecifier)) {
       return undefined;
     }
@@ -829,8 +837,48 @@ export async function activate(context: vscode.ExtensionContext) {
     const documentDir = vscode.Uri.joinPath(document.uri, "..");
 
     if (importPath.startsWith("./") || importPath.startsWith("../")) {
-      const resolvedPath = vscode.Uri.joinPath(documentDir, importPath + ".ts");
-      return resolvedPath;
+      // Check if the import already has a file extension
+      const hasExtension = /\.(m?[tj]sx?|[cm]js)$/.test(importPath);
+
+      if (hasExtension) {
+        // Replace .js/.mjs/.cjs extensions with TypeScript equivalents
+        const extensions = [
+          importPath.replace(/\.m?js$/, ".ts"),
+          importPath.replace(/\.m?js$/, ".tsx"),
+          importPath.replace(/\.m?js$/, ".mts"),
+          importPath.replace(/\.cjs$/, ".cts"),
+          importPath, // Also try the original extension
+        ];
+
+        for (const path of extensions) {
+          const resolvedPath = vscode.Uri.joinPath(documentDir, path);
+          try {
+            await vscode.workspace.fs.stat(resolvedPath);
+            return resolvedPath;
+          } catch {
+            continue;
+          }
+        }
+
+        // Fallback: try the original path
+        return vscode.Uri.joinPath(documentDir, importPath);
+      } else {
+        // No extension, try common TypeScript/JavaScript extensions
+        const extensions = [".ts", ".tsx", ".js", ".jsx"];
+
+        for (const ext of extensions) {
+          const resolvedPath = vscode.Uri.joinPath(documentDir, importPath + ext);
+          try {
+            await vscode.workspace.fs.stat(resolvedPath);
+            return resolvedPath;
+          } catch {
+            continue;
+          }
+        }
+
+        // If no file found, return .ts as fallback
+        return vscode.Uri.joinPath(documentDir, importPath + ".ts");
+      }
     }
 
     return undefined;
