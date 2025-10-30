@@ -5,13 +5,15 @@ import {
   exchangeType,
   exchangeType2,
   exchangeType3,
+  exchangeTypeEnum,
+  exchangeTypeUnion,
   mockEvent,
   mockExchange,
   tradeStatus,
   userRole,
-} from "./realistic-mock-data";
+} from "./mock";
 import { t } from "./t";
-import { ExchangeType, ExchangeTypeEnum, ExchangeTypeUnion } from "./types";
+import { ExchangeTypeEnum } from "./types";
 
 // Test all exchange types in various contexts
 t(`EXCHANGE.${exchangeType}.FEATURES.ADVANCED_TRADING`);
@@ -39,13 +41,9 @@ t(`EXCHANGE.${exchangeType}.EVENTS.${eventType}.DETAILS`);
 t(`USER.${userRole}.EXCHANGE.${exchangeType2}.SETTINGS`);
 t(`TRADING.${assetSymbol}.STATUS.${tradeStatus}.MESSAGE`);
 
-// Original examples
-const exchangeTypeUnion = "MEXC" as ExchangeTypeUnion;
-const exchangeTypeEnum: ExchangeTypeEnum = ExchangeTypeEnum.MEXC;
-
 t(`MAIN.ENUM.${exchangeTypeUnion}`);
 t(`MAIN.ENUM.${exchangeTypeEnum}`);
-Object.values(ExchangeType).forEach((value) => t(`MAIN.ENUM.${value}`));
+Object.values(ExchangeTypeEnum).forEach((value) => t(`MAIN.ENUM.${value}`));
 
 // Additional test patterns
 const dynamicExchange = "BITUNIX" as const;

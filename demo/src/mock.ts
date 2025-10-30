@@ -16,6 +16,9 @@ export const eventStatus2 = "SCHEDULED" as const;
 export const tradeType = "SPOT" as const;
 export const tradeType2 = "FUTURES" as const;
 
+export const exchangeTypeUnion = "MEXC" as ExchangeTypeUnion;
+export const exchangeTypeEnum: ExchangeTypeEnum = ExchangeTypeEnum.MEXC;
+
 export const mockExchange = {
   exchangeType: "MEXC" as ExchangeTypeEnum,
   name: "MEXC Exchange",
