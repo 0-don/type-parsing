@@ -1,11 +1,7 @@
-// src/parsers/template-literal-parser.ts - Parse template literals from source code
 import * as ts from "typescript";
 import * as vscode from "vscode";
 import { TemplateLiteralPosition, TemplatePart } from "../types";
 
-/**
- * Find all template literals in a document
- */
 export function findTemplateLiterals(
   document: vscode.TextDocument
 ): TemplateLiteralPosition[] {
@@ -64,9 +60,6 @@ export function findTemplateLiterals(
   return positions;
 }
 
-/**
- * Generate all possible string combinations from template parts and variable values
- */
 export function generateCombinations(
   templateParts: TemplatePart[],
   variableValues: Map<string, string[]>

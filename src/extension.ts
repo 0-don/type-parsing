@@ -1,4 +1,3 @@
-// src/extension.ts - Main extension entry point
 import * as vscode from "vscode";
 import { findTemplateLiterals } from "./parsers/template-literal-parser";
 import { buildDecorations } from "./utils/decoration-builder";

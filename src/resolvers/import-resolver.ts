@@ -1,10 +1,6 @@
-// src/resolvers/import-resolver.ts - Import path resolution
 import * as ts from "typescript";
 import * as vscode from "vscode";
 
-/**
- * Resolve an import path to a file URI
- */
 export async function resolveImportPath(
   importDecl: ts.ImportDeclaration,
   document: vscode.TextDocument
@@ -17,17 +13,15 @@ export async function resolveImportPath(
   const documentDir = vscode.Uri.joinPath(document.uri, "..");
 
   if (importPath.startsWith("./") || importPath.startsWith("../")) {
-    // Check if the import already has a file extension
     const hasExtension = /\.(m?[tj]sx?|[cm]js)$/.test(importPath);
 
     if (hasExtension) {
-      // Replace .js/.mjs/.cjs extensions with TypeScript equivalents
       const extensions = [
         importPath.replace(/\.m?js$/, ".ts"),
         importPath.replace(/\.m?js$/, ".tsx"),
         importPath.replace(/\.m?js$/, ".mts"),
         importPath.replace(/\.cjs$/, ".cts"),
-        importPath, // Also try the original extension
+        importPath,
       ];
 
       for (const path of extensions) {
@@ -40,10 +34,8 @@ export async function resolveImportPath(
         }
       }
 
-      // Fallback: try the original path
       return vscode.Uri.joinPath(documentDir, importPath);
     } else {
-      // No extension, try common TypeScript/JavaScript extensions
       const extensions = [".ts", ".tsx", ".js", ".jsx"];
 
       for (const ext of extensions) {
@@ -56,7 +48,6 @@ export async function resolveImportPath(
         }
       }
 
-      // If no file found, return .ts as fallback
       return vscode.Uri.joinPath(documentDir, importPath + ".ts");
     }
   }

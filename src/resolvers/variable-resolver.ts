@@ -1,22 +1,16 @@
-// src/resolvers/variable-resolver.ts - Variable resolution logic
 import * as ts from "typescript";
 import * as vscode from "vscode";
 import { findDeclarationInFile, findImportDeclaration, findExportedDeclaration, findNodeAtPosition, extractValuesFromNode } from "../utils/typescript-helpers";
 import { resolveImportPath } from "./import-resolver";
 import { extractValuesFromDeclaration, resolvePropertyValue } from "./value-extractor";
 
-/**
- * Main entry point for resolving a variable expression to its possible values
- */
 export async function resolveVariable(
   varExpression: string,
   position: vscode.Position | undefined,
   document: vscode.TextDocument,
   sourceFile: ts.SourceFile
 ): Promise<string[]> {
-  // For property access, use a hybrid approach
   if (varExpression.includes(".")) {
-    // First try to get type info from hover (which shows the actual type)
     if (position) {
       const hoverValues = await getTypeFromHover(document, position);
       if (hoverValues.length > 0) {
@@ -24,7 +18,6 @@ export async function resolveVariable(
       }
     }
 
-    // Fallback to manual property resolution
     const propertyValues = await resolvePropertyAccess(
       varExpression,
       sourceFile,
@@ -35,7 +28,6 @@ export async function resolveVariable(
     }
   }
 
-  // For simple variables, use language server first
   if (position) {
     const languageServerValues = await tryLanguageServerProviders(
       document,
@@ -46,7 +38,6 @@ export async function resolveVariable(
     }
   }
 
-  // Fallback strategies
   const localValues = await resolveFromLocalScope(
     varExpression,
     sourceFile,
@@ -64,9 +55,6 @@ export async function resolveVariable(
   return importValues;
 }
 
-/**
- * Get type information from VSCode hover provider
- */
 async function getTypeFromHover(
   document: vscode.TextDocument,
   position: vscode.Position
@@ -83,18 +71,15 @@ async function getTypeFromHover(
         .map((c) => (typeof c === "string" ? c : c.value))
         .join("\n");
 
-      // Look for type annotations like: (property) exchangeType: ExchangeTypeUnion
       const typeMatch = hoverText.match(/:\s*(\w+)/);
       if (typeMatch) {
         const typeName = typeMatch[1];
 
-        // If it's a union or enum type, try to resolve it
         if (
           typeName.includes("Union") ||
           typeName.includes("Enum") ||
           typeName.includes("Type")
         ) {
-          // Look for the type definition in current file or imports
           const sourceFile = ts.createSourceFile(
             document.fileName,
             document.getText(),
@@ -107,7 +92,6 @@ async function getTypeFromHover(
           let typeDeclDocument = document;
 
           if (!typeDecl) {
-            // Try to find in imports
             const importDecl = findImportDeclaration(sourceFile, typeName);
             if (importDecl) {
               const importPath = await resolveImportPath(importDecl, document);
@@ -146,7 +130,6 @@ async function getTypeFromHover(
         }
       }
 
-      // Fallback to parsing union types directly from hover
       return parseHoverForUnionTypes(hovers[0]);
     }
   } catch (error) {
@@ -156,15 +139,11 @@ async function getTypeFromHover(
   return [];
 }
 
-/**
- * Try using VSCode's language server providers to get type information
- */
 async function tryLanguageServerProviders(
   document: vscode.TextDocument,
   position: vscode.Position
 ): Promise<string[]> {
   try {
-    // Try type definition provider first
     const typeDefs = await vscode.commands.executeCommand<vscode.Location[]>(
       "vscode.executeTypeDefinitionProvider",
       document.uri,
@@ -178,7 +157,6 @@ async function tryLanguageServerProviders(
       }
     }
 
-    // Try definition provider as fallback
     const definitions = await vscode.commands.executeCommand<
       vscode.Location[]
     >("vscode.executeDefinitionProvider", document.uri, position);
@@ -196,14 +174,10 @@ async function tryLanguageServerProviders(
   return [];
 }
 
-/**
- * Extract values from a type location returned by language server
- */
 async function extractValuesFromTypeLocation(
   location: vscode.Location | vscode.LocationLink
 ): Promise<string[]> {
   try {
-    // Handle both Location and LocationLink
     const uri = 'uri' in location ? location.uri : location.targetUri;
     const range = 'range' in location ? location.range : location.targetRange;
 
@@ -235,21 +209,16 @@ async function extractValuesFromTypeLocation(
   }
 }
 
-/**
- * Parse hover text for union types
- */
 function parseHoverForUnionTypes(hover: vscode.Hover): string[] {
   const hoverText = hover.contents
     .map((c) => (typeof c === "string" ? c : c.value))
     .join("\n");
 
-  // Look for union type patterns like: "MEXC" | "BYBIT" | "PHEMEX"
   const unionMatches = Array.from(hoverText.matchAll(/"([^"]+)"/g));
   if (unionMatches.length > 1) {
     return unionMatches.map((match) => match[1]);
   }
 
-  // Look for single string literal type
   const singleLiteralMatch = hoverText.match(/:\s*"([^"]+)"/);
   if (singleLiteralMatch) {
     return [singleLiteralMatch[1]];
@@ -258,9 +227,6 @@ function parseHoverForUnionTypes(hover: vscode.Hover): string[] {
   return [];
 }
 
-/**
- * Resolve property access expressions (e.g., obj.property)
- */
 async function resolvePropertyAccess(
   expression: string,
   sourceFile: ts.SourceFile,
@@ -269,13 +235,11 @@ async function resolvePropertyAccess(
   const parts = expression.split(".");
   const objectName = parts[0];
 
-  // Find the object declaration - first in local file, then in imports
   let objectDecl = findDeclarationInFile(sourceFile, objectName);
   let objectSourceFile = sourceFile;
   let objectDocument = document;
 
   if (!objectDecl) {
-    // Try to find in imports
     const importDecl = findImportDeclaration(sourceFile, objectName);
     if (importDecl) {
       const importPath = await resolveImportPath(importDecl, document);
@@ -313,9 +277,7 @@ async function resolvePropertyAccess(
     return [];
   }
 
-  // Look for type annotation on the object declaration
   if (objectDecl.type) {
-    // If there's an explicit type annotation, use that
     const typeName = objectDecl.type.getText(objectSourceFile);
     let typeDecl = findDeclarationInFile(objectSourceFile, typeName);
 
@@ -347,7 +309,6 @@ async function resolvePropertyAccess(
     }
   }
 
-  // Fallback to examining the property itself
   if (ts.isObjectLiteralExpression(objectDecl.initializer)) {
     const propertyName = parts[1];
     const property = objectDecl.initializer.properties.find(
@@ -369,9 +330,6 @@ async function resolvePropertyAccess(
   return [];
 }
 
-/**
- * Resolve variable from local scope
- */
 async function resolveFromLocalScope(
   varName: string,
   sourceFile: ts.SourceFile,
@@ -388,9 +346,6 @@ async function resolveFromLocalScope(
   );
 }
 
-/**
- * Resolve variable from imports
- */
 async function resolveFromImports(
   varName: string,
   sourceFile: ts.SourceFile,

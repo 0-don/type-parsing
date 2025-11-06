@@ -1,10 +1,6 @@
-// src/utils/typescript-helpers.ts - TypeScript AST helper functions
 import * as ts from "typescript";
 import * as vscode from "vscode";
 
-/**
- * Find a declaration in a source file by name
- */
 export function findDeclarationInFile(
   sourceFile: ts.SourceFile,
   name: string
@@ -42,9 +38,6 @@ export function findDeclarationInFile(
   return found;
 }
 
-/**
- * Find an import declaration for a specific variable name
- */
 export function findImportDeclaration(
   sourceFile: ts.SourceFile,
   varName: string
@@ -65,9 +58,6 @@ export function findImportDeclaration(
   return undefined;
 }
 
-/**
- * Find an exported declaration in a source file
- */
 export function findExportedDeclaration(
   sourceFile: ts.SourceFile,
   name: string
@@ -110,9 +100,6 @@ export function findExportedDeclaration(
   return findDeclarationInFile(sourceFile, name);
 }
 
-/**
- * Check if a node has an export modifier
- */
 export function hasExportModifier(node: ts.Node): boolean {
   return (
     (ts.canHaveModifiers(node) &&
@@ -123,9 +110,6 @@ export function hasExportModifier(node: ts.Node): boolean {
   );
 }
 
-/**
- * Find a node at a specific position in the source file
- */
 export function findNodeAtPosition(
   sourceFile: ts.SourceFile,
   position: number
@@ -138,9 +122,6 @@ export function findNodeAtPosition(
   return find(sourceFile);
 }
 
-/**
- * Extract string literals from a TypeScript type node
- */
 export async function extractStringLiteralsFromType(
   typeNode: ts.TypeNode,
   sourceFile: ts.SourceFile,
@@ -174,9 +155,6 @@ export async function extractStringLiteralsFromType(
   return [];
 }
 
-/**
- * Extract values from a TypeScript node by traversing up the AST
- */
 export async function extractValuesFromNode(
   node: ts.Node,
   sourceFile: ts.SourceFile,

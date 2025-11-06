@@ -1,13 +1,9 @@
-// src/utils/decoration-builder.ts - Build decorations for the editor
 import * as ts from "typescript";
 import * as vscode from "vscode";
 import { TemplateLiteralPosition } from "../types";
 import { resolveVariable } from "../resolvers/variable-resolver";
 import { generateCombinations } from "../parsers/template-literal-parser";
 
-/**
- * Build decorations for template literals in the document
- */
 export async function buildDecorations(
   positions: TemplateLiteralPosition[],
   document: vscode.TextDocument
@@ -48,9 +44,6 @@ export async function buildDecorations(
   return decorations;
 }
 
-/**
- * Group template literal positions by their line end position
- */
 function groupByLineEnd(
   positions: TemplateLiteralPosition[]
 ): Map<string, TemplateLiteralPosition[]> {
@@ -65,9 +58,6 @@ function groupByLineEnd(
   return map;
 }
 
-/**
- * Resolve all variable values in a group of template literals
- */
 async function resolveVariableValues(
   group: TemplateLiteralPosition[],
   document: vscode.TextDocument
