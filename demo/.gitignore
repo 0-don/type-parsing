@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+bun.lock*
+yarn.lock
+pnpm-lock.yaml
+.env
+test
