@@ -1,6 +1,8 @@
 import { useState } from "react";
 import reactLogo from "./assets/react.svg";
+import { t } from "./lib/t";
 import viteLogo from "/vite.svg";
+import { mockExchange } from "./lib/mock";
 
 function App() {
   const [count, setCount] = useState(0);
@@ -24,6 +26,7 @@ function App() {
           Edit <code>src/App.tsx</code> and save to test HMR
         </p>
       </div>
+      {t(`BENEFITS.${mockExchange.exchangeType}.AMOUNT`)}
       <p className="read-the-docs">
         Click on the Vite and React logos to learn more
       </p>
