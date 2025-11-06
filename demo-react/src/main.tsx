@@ -9,9 +9,9 @@ import {
   exchangeTypeUnion,
   mockEvent,
   mockExchange,
-} from "./mock.ts";
-import { t } from "./t.ts";
-import { ExchangeTypeEnum } from "./types.ts";
+} from "./lib/mock.ts";
+import { t } from "./lib/t.ts";
+import { ExchangeTypeEnum } from "./lib/types.ts";
 
 // Test all exchange types in various contexts
 t(`EXCHANGE.${exchangeType}.FEATURES.ADVANCED_TRADING`);
