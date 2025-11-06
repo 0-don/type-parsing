@@ -1,10 +1,34 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.tsx'
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App.tsx";
+import "./index.css";
+import {
+  eventType,
+  exchangeType,
+  exchangeTypeEnum,
+  exchangeTypeUnion,
+  mockEvent,
+  mockExchange,
+} from "./mock.ts";
+import { t } from "./t.ts";
+import { ExchangeTypeEnum } from "./types.ts";
 
-createRoot(document.getElementById('root')!).render(
+// Test all exchange types in various contexts
+t(`EXCHANGE.${exchangeType}.FEATURES.ADVANCED_TRADING`);
+
+// Complex nested scenarios
+t(`EXCHANGE.${exchangeType}.EVENTS.${eventType}.DETAILS`);
+
+// Test benefits and rewards
+t(`BENEFITS.${mockExchange.exchangeType}.AMOUNT`);
+t(`REWARDS.${mockEvent.exchangeType}.CASHBACK_BOOST`);
+
+t(`MAIN.ENUM.${exchangeTypeUnion}`);
+t(`MAIN.ENUM.${exchangeTypeEnum}`);
+Object.values(ExchangeTypeEnum).forEach((value) => t(`MAIN.ENUM.${value}`));
+
+createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <App />
-  </StrictMode>,
-)
+  </StrictMode>
+);
