@@ -1,9 +1,9 @@
 import { useState } from "react";
 import reactLogo from "./assets/react.svg";
-import type { ExchangeDtoExchangeType } from "./lib/openapi";
+import { mockExchange } from "./lib/mock";
+import { ExchangeDtoExchangeType } from "./lib/openapi";
 import { t } from "./lib/t";
 import viteLogo from "/vite.svg";
-import { mockExchange } from "./lib/mock";
 
 const params = {
   exchangeType: "",
