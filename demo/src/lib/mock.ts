@@ -1,4 +1,4 @@
-import { ExchangeTypeEnum, ExchangeTypeUnion } from "./types";
+import { ExchangeTypeEnum, type ExchangeTypeUnion } from "./types";
 
 export const exchangeType = "BITGET" as const;
 export const eventType = "CASHBACK_BOOST" as const;
@@ -23,4 +23,3 @@ export const mockEvent = {
   status: "ACTIVE",
   exchangeType: "BYBIT" as ExchangeTypeUnion,
 };
-

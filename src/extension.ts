@@ -55,6 +55,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
       const positions = findTemplateLiterals(document);
       const decorations = await buildDecorations(positions, document);
+      console.log("[TypeParsing] Decorations built:", positions, decorations);
       editor.setDecorations(decorationType, decorations);
     } catch (error) {
       console.error("[TypeParsing] Update failed:", error);
