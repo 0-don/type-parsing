@@ -1,6 +1,11 @@
 import * as ts from "typescript";
 import * as vscode from "vscode";
-import { findDeclarationInFile, findImportDeclaration, findExportedDeclaration, extractStringLiteralsFromType } from "../utils/typescript-helpers";
+import {
+  extractStringLiteralsFromType,
+  findDeclarationInFile,
+  findExportedDeclaration,
+  findImportDeclaration,
+} from "../utils/typescript-helpers";
 import { resolveImportPath } from "./import-resolver";
 
 export async function extractValuesFromDeclaration(
@@ -51,17 +56,11 @@ export async function extractValuesFromDeclaration(
                 ts.ScriptTarget.Latest,
                 true
               );
-              typeDecl = findExportedDeclaration(
-                importedSourceFile,
-                typeName
-              );
+              typeDecl = findExportedDeclaration(importedSourceFile, typeName);
             }
           }
         } catch (error) {
-          console.error(
-            "[TypeParsing] Type import resolution failed:",
-            error
-          );
+          console.error("[TypeParsing] Type import resolution failed:", error);
         }
       }
 
@@ -87,7 +86,11 @@ export async function extractValuesFromDeclaration(
   }
 
   if (ts.isTypeAliasDeclaration(declaration)) {
-    return extractStringLiteralsFromType(declaration.type, sourceFile, extractValuesFromDeclaration);
+    return extractStringLiteralsFromType(
+      declaration.type,
+      sourceFile,
+      extractValuesFromDeclaration
+    );
   }
 
   return [];

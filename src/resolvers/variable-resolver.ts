@@ -1,8 +1,17 @@
 import * as ts from "typescript";
 import * as vscode from "vscode";
-import { findDeclarationInFile, findImportDeclaration, findExportedDeclaration, findNodeAtPosition, extractValuesFromNode } from "../utils/typescript-helpers";
+import {
+  extractValuesFromNode,
+  findDeclarationInFile,
+  findExportedDeclaration,
+  findImportDeclaration,
+  findNodeAtPosition,
+} from "../utils/typescript-helpers";
 import { resolveImportPath } from "./import-resolver";
-import { extractValuesFromDeclaration, resolvePropertyValue } from "./value-extractor";
+import {
+  extractValuesFromDeclaration,
+  resolvePropertyValue,
+} from "./value-extractor";
 
 export async function resolveVariable(
   varExpression: string,
@@ -157,9 +166,11 @@ async function tryLanguageServerProviders(
       }
     }
 
-    const definitions = await vscode.commands.executeCommand<
-      vscode.Location[]
-    >("vscode.executeDefinitionProvider", document.uri, position);
+    const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+      "vscode.executeDefinitionProvider",
+      document.uri,
+      position
+    );
 
     if (definitions?.[0]) {
       const values = await extractValuesFromTypeLocation(definitions[0]);
@@ -178,8 +189,8 @@ async function extractValuesFromTypeLocation(
   location: vscode.Location | vscode.LocationLink
 ): Promise<string[]> {
   try {
-    const uri = 'uri' in location ? location.uri : location.targetUri;
-    const range = 'range' in location ? location.range : location.targetRange;
+    const uri = "uri" in location ? location.uri : location.targetUri;
+    const range = "range" in location ? location.range : location.targetRange;
 
     if (!uri || !range) {
       return [];
@@ -193,16 +204,18 @@ async function extractValuesFromTypeLocation(
       true
     );
 
-    const node = findNodeAtPosition(
-      sourceFile,
-      doc.offsetAt(range.start)
-    );
+    const node = findNodeAtPosition(sourceFile, doc.offsetAt(range.start));
 
     if (!node) {
       return [];
     }
 
-    return await extractValuesFromNode(node, sourceFile, doc, extractValuesFromDeclaration);
+    return await extractValuesFromNode(
+      node,
+      sourceFile,
+      doc,
+      extractValuesFromDeclaration
+    );
   } catch (error) {
     console.error("[TypeParsing] Extract from type location failed:", error);
     return [];
@@ -254,10 +267,7 @@ async function resolvePropertyAccess(
             ts.ScriptTarget.Latest,
             true
           );
-          objectDecl = findExportedDeclaration(
-            importedSourceFile,
-            objectName
-          );
+          objectDecl = findExportedDeclaration(importedSourceFile, objectName);
           if (objectDecl) {
             objectSourceFile = importedSourceFile;
             objectDocument = importedDoc;
@@ -339,11 +349,7 @@ async function resolveFromLocalScope(
   if (!declaration) {
     return [];
   }
-  return await extractValuesFromDeclaration(
-    declaration,
-    sourceFile,
-    document
-  );
+  return await extractValuesFromDeclaration(declaration, sourceFile, document);
 }
 
 async function resolveFromImports(

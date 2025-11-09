@@ -39,15 +39,10 @@ export function findTemplateLiterals(
         (p) => p.type === "variable" && p.position
       );
       if (firstVar?.position) {
-        const lineEnd = sourceFile.getLineAndCharacterOfPosition(
-          node.getEnd()
-        );
+        const lineEnd = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
         positions.push({
           variablePosition: firstVar.position,
-          lineEndPosition: new vscode.Position(
-            lineEnd.line,
-            lineEnd.character
-          ),
+          lineEndPosition: new vscode.Position(lineEnd.line, lineEnd.character),
           templateParts,
         });
       }

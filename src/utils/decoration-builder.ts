@@ -1,8 +1,8 @@
 import * as ts from "typescript";
 import * as vscode from "vscode";
-import { TemplateLiteralPosition } from "../types";
-import { resolveVariable } from "../resolvers/variable-resolver";
 import { generateCombinations } from "../parsers/template-literal-parser";
+import { resolveVariable } from "../resolvers/variable-resolver";
+import { TemplateLiteralPosition } from "../types";
 
 export async function buildDecorations(
   positions: TemplateLiteralPosition[],
@@ -21,6 +21,7 @@ export async function buildDecorations(
       group[0].templateParts,
       varValues
     );
+
     if (combinations.length > 0) {
       const displayText =
         combinations.length > 5
