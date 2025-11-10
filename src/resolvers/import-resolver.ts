@@ -1,3 +1,4 @@
+import * as path from "path";
 import * as ts from "typescript";
 import * as vscode from "vscode";
 
@@ -12,45 +13,124 @@ export async function resolveImportPath(
   const importPath = importDecl.moduleSpecifier.text;
   const documentDir = vscode.Uri.joinPath(document.uri, "..");
 
+  // Handle relative imports
   if (importPath.startsWith("./") || importPath.startsWith("../")) {
-    const hasExtension = /\.(m?[tj]sx?|[cm]js)$/.test(importPath);
-
-    if (hasExtension) {
-      const extensions = [
-        importPath.replace(/\.m?js$/, ".ts"),
-        importPath.replace(/\.m?js$/, ".tsx"),
-        importPath.replace(/\.m?js$/, ".mts"),
-        importPath.replace(/\.cjs$/, ".cts"),
-        importPath,
-      ];
-
-      for (const path of extensions) {
-        const resolvedPath = vscode.Uri.joinPath(documentDir, path);
-        try {
-          await vscode.workspace.fs.stat(resolvedPath);
-          return resolvedPath;
-        } catch {
-          continue;
-        }
-      }
-
-      return vscode.Uri.joinPath(documentDir, importPath);
-    } else {
-      const extensions = [".ts", ".tsx", ".js", ".jsx"];
-
-      for (const ext of extensions) {
-        const resolvedPath = vscode.Uri.joinPath(documentDir, importPath + ext);
-        try {
-          await vscode.workspace.fs.stat(resolvedPath);
-          return resolvedPath;
-        } catch {
-          continue;
-        }
-      }
-
-      return vscode.Uri.joinPath(documentDir, importPath + ".ts");
-    }
+    return resolveRelativeImport(importPath, documentDir);
   }
 
-  return undefined;
+  // Use TypeScript's module resolution for everything else
+  return resolveWithTypeScript(importPath, document);
+}
+
+async function resolveWithTypeScript(
+  importPath: string,
+  document: vscode.TextDocument
+): Promise<vscode.Uri | undefined> {
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+  if (!workspaceFolder) {
+    return undefined;
+  }
+
+  try {
+    // Find and parse tsconfig.json or jsconfig.json
+    const configPath =
+      ts.findConfigFile(
+        path.dirname(document.uri.fsPath),
+        ts.sys.fileExists,
+        "tsconfig.json"
+      ) ||
+      ts.findConfigFile(
+        path.dirname(document.uri.fsPath),
+        ts.sys.fileExists,
+        "jsconfig.json"
+      );
+
+    if (!configPath) {
+      console.log("[TypeParsing] No config file found");
+      return undefined;
+    }
+
+    // Read and parse the config file
+    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (configFile.error) {
+      console.log(
+        "[TypeParsing] Error reading config:",
+        configFile.error.messageText
+      );
+      return undefined;
+    }
+
+    // Parse the config with TypeScript's built-in parser
+    const parsedConfig = ts.parseJsonConfigFileContent(
+      configFile.config,
+      ts.sys,
+      path.dirname(configPath)
+    );
+
+    if (parsedConfig.errors.length > 0) {
+      console.log("[TypeParsing] Config parse errors:", parsedConfig.errors);
+    }
+
+    // Use TypeScript's module resolution
+    const resolved = ts.resolveModuleName(
+      importPath,
+      document.uri.fsPath,
+      parsedConfig.options,
+      ts.sys
+    );
+
+    if (resolved.resolvedModule) {
+      const resolvedPath = resolved.resolvedModule.resolvedFileName;
+      console.log(
+        `[TypeParsing] TypeScript resolved ${importPath} -> ${resolvedPath}`
+      );
+      return vscode.Uri.file(resolvedPath);
+    }
+
+    console.log(`[TypeParsing] TypeScript could not resolve: ${importPath}`);
+    return undefined;
+  } catch (error) {
+    console.error("[TypeParsing] TypeScript resolution error:", error);
+    return undefined;
+  }
+}
+
+async function resolveRelativeImport(
+  importPath: string,
+  documentDir: vscode.Uri
+): Promise<vscode.Uri | undefined> {
+  const hasExtension = /\.(m?[tj]sx?|[cm]js)$/.test(importPath);
+
+  if (hasExtension) {
+    const extensions = [
+      importPath.replace(/\.m?js$/, ".ts"),
+      importPath.replace(/\.m?js$/, ".tsx"),
+      importPath.replace(/\.m?js$/, ".mts"),
+      importPath.replace(/\.cjs$/, ".cts"),
+      importPath,
+    ];
+
+    for (const ext of extensions) {
+      const resolvedPath = vscode.Uri.joinPath(documentDir, ext);
+      try {
+        await vscode.workspace.fs.stat(resolvedPath);
+        return resolvedPath;
+      } catch {
+        continue;
+      }
+    }
+    return vscode.Uri.joinPath(documentDir, importPath);
+  } else {
+    const extensions = [".ts", ".tsx", ".js", ".jsx"];
+    for (const ext of extensions) {
+      const resolvedPath = vscode.Uri.joinPath(documentDir, importPath + ext);
+      try {
+        await vscode.workspace.fs.stat(resolvedPath);
+        return resolvedPath;
+      } catch {
+        continue;
+      }
+    }
+    return vscode.Uri.joinPath(documentDir, importPath + ".ts");
+  }
 }
