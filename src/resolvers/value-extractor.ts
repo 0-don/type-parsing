@@ -13,31 +13,46 @@ export async function extractValuesFromDeclaration(
   sourceFile: ts.SourceFile,
   document?: vscode.TextDocument
 ): Promise<string[]> {
+  console.log(
+    `[TypeParsing] Extracting values from declaration type: ${
+      ts.SyntaxKind[declaration.kind]
+    }`
+  );
+
   if (ts.isEnumDeclaration(declaration)) {
-    return declaration.members.map((member) =>
+    const values = declaration.members.map((member) =>
       member.initializer && ts.isStringLiteral(member.initializer)
         ? member.initializer.text
         : member.name.getText(sourceFile)
     );
+    console.log(`[TypeParsing] Enum values:`, values);
+    return values;
   }
 
   if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
+    console.log(`[TypeParsing] Variable declaration with initializer`);
+
     if (ts.isObjectLiteralExpression(declaration.initializer)) {
-      return declaration.initializer.properties
+      const values = declaration.initializer.properties
         .filter(ts.isPropertyAssignment)
         .map((prop) => prop.name.getText(sourceFile).replace(/"/g, ""));
+      console.log(`[TypeParsing] Object literal values:`, values);
+      return values;
     }
 
     if (
       ts.isAsExpression(declaration.initializer) &&
       ts.isObjectLiteralExpression(declaration.initializer.expression)
     ) {
-      return declaration.initializer.expression.properties
+      const values = declaration.initializer.expression.properties
         .filter(ts.isPropertyAssignment)
         .map((prop) => prop.name.getText(sourceFile).replace(/"/g, ""));
+      console.log(`[TypeParsing] As expression object literal values:`, values);
+      return values;
     }
 
     if (ts.isAsExpression(declaration.initializer)) {
+      console.log(`[TypeParsing] As expression, looking for type`);
       const typeName = declaration.initializer.type.getText(sourceFile);
       let typeDecl = findDeclarationInFile(sourceFile, typeName);
 
@@ -86,14 +101,97 @@ export async function extractValuesFromDeclaration(
   }
 
   if (ts.isTypeAliasDeclaration(declaration)) {
-    return extractStringLiteralsFromType(
+    console.log(`[TypeParsing] Type alias declaration`);
+    const typeText = declaration.type.getText(sourceFile);
+    console.log(`[TypeParsing] Type text: ${typeText}`);
+
+    // Handle the pattern: (typeof X)[keyof typeof X]
+    const typeofMatch = typeText.match(
+      /\(typeof\s+(\w+)\)\[keyof\s+typeof\s+\w+\]/
+    );
+    if (typeofMatch) {
+      const objectName = typeofMatch[1];
+      console.log(
+        `[TypeParsing] Found typeof pattern, looking for const object: ${objectName}`
+      );
+
+      // Find the const object with the same name (not the type alias)
+      const objectDecl = findConstObjectDeclaration(sourceFile, objectName);
+      if (objectDecl) {
+        console.log(`[TypeParsing] Found const object declaration`);
+        const objectValues = await extractValuesFromDeclaration(
+          objectDecl,
+          sourceFile,
+          document
+        );
+        if (objectValues.length > 0) {
+          console.log(
+            `[TypeParsing] Object values from typeof pattern:`,
+            objectValues
+          );
+          return objectValues;
+        }
+      }
+    }
+
+    const typeValues = await extractStringLiteralsFromType(
       declaration.type,
       sourceFile,
       extractValuesFromDeclaration
     );
+    console.log(`[TypeParsing] Type alias values:`, typeValues);
+    return typeValues;
+  }
+  console.log(`[TypeParsing] No values extracted from declaration`);
+  return [];
+}
+
+export function findConstObjectDeclaration(
+  sourceFile: ts.SourceFile,
+  name: string
+): ts.VariableDeclaration | undefined {
+  let found: ts.VariableDeclaration | undefined;
+
+  function visit(node: ts.Node) {
+    if (found) {
+      return;
+    }
+
+    // Look specifically for const variable declarations
+    if (ts.isVariableStatement(node)) {
+      const declaration = node.declarationList.declarations.find(
+        (decl) => {
+          if (!ts.isIdentifier(decl.name) || decl.name.text !== name || !decl.initializer) {
+            return false;
+          }
+
+          // Handle both direct object literals and "as const" expressions
+          if (ts.isObjectLiteralExpression(decl.initializer)) {
+            return true;
+          }
+          
+          // Handle "as const" pattern: { ... } as const
+          if (ts.isAsExpression(decl.initializer) && 
+              ts.isObjectLiteralExpression(decl.initializer.expression)) {
+            return true;
+          }
+
+          return false;
+        }
+      );
+      
+      if (declaration) {
+        found = declaration;
+        return;
+      }
+    }
+
+    ts.forEachChild(node, visit);
   }
 
-  return [];
+  visit(sourceFile);
+  console.log(`[TypeParsing] findConstObjectDeclaration for ${name}: ${found ? 'found' : 'not found'}`);
+  return found;
 }
 
 export async function resolvePropertyValue(
