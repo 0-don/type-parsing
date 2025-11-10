@@ -33,7 +33,7 @@ function App() {
         </p>
       </div>
       {t(`BENEFITS.${exchangeType}.AMOUNT`)}
-      {t(`BENEFITS.${mockExchange.exchangeType}.AMOUNT`)}
+      {t(`BENEFITS.${mockExchange?.exchangeType!}.AMOUNT`)}
       <p className="read-the-docs">
         Click on the Vite and React logos to learn more
       </p>
