@@ -181,3 +181,75 @@ export async function extractValuesFromNode(
 
   return [];
 }
+
+export async function extractUnionTypesFromPosition(
+  document: vscode.TextDocument,
+  position: vscode.Position
+): Promise<string[]> {
+  try {
+    const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+      "vscode.executeHoverProvider",
+      document.uri,
+      position
+    );
+
+    if (!hovers || hovers.length === 0) {
+      console.log("[TypeParsing] No hover information available");
+      return [];
+    }
+
+    let hoverText = hovers[0].contents
+      .map((c) => (typeof c === "string" ? c : c.value))
+      .join("\n");
+
+    // If hover is still loading, wait a bit and try again
+    if (hoverText.includes("loading")) {
+      console.log("[TypeParsing] Hover still loading, retrying...");
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const retriedHovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+        "vscode.executeHoverProvider",
+        document.uri,
+        position
+      );
+
+      if (retriedHovers && retriedHovers.length > 0) {
+        hoverText = retriedHovers[0].contents
+          .map((c) => (typeof c === "string" ? c : c.value))
+          .join("\n");
+      }
+    }
+
+    console.log("[TypeParsing] Hover text:", hoverText);
+
+    // Skip if still loading or shows 'any'
+    if (hoverText.includes("loading") || hoverText.includes(") any")) {
+      console.log("[TypeParsing] Hover not ready or shows 'any', falling back to AST parsing");
+      return [];
+    }
+
+    // Extract union type values from hover text
+    // Matches patterns like: code: "DE" | "EN" or (property) code: "DE" | "EN"
+    const unionMatches = Array.from(hoverText.matchAll(/"([^"]+)"/g));
+    console.log("[TypeParsing] Union matches found:", unionMatches.length);
+
+    if (unionMatches.length > 1) {
+      const values = unionMatches.map((match) => match[1]);
+      console.log("[TypeParsing] Extracted union values:", values);
+      return values;
+    }
+
+    // Check if it's a single literal type
+    const literalMatch = hoverText.match(/:\s*"([^"]+)"/);
+    if (literalMatch) {
+      console.log("[TypeParsing] Single literal value:", literalMatch[1]);
+      return [literalMatch[1]];
+    }
+
+    console.log("[TypeParsing] No union or literal types found in hover text");
+    return [];
+  } catch (error) {
+    console.error("[TypeParsing] Extract union types from position failed:", error);
+    return [];
+  }
+}

@@ -21,10 +21,12 @@ export function findTemplateLiterals(
       templateParts.push({ type: "static", value: node.head.text });
 
       node.templateSpans.forEach((span) => {
-        const start = sourceFile.getLineAndCharacterOfPosition(
-          span.expression.getStart()
+        // Use the END position for property access to get the correct type
+        // e.g., for "lang.code", we want the position after "code", not before "lang"
+        const end = sourceFile.getLineAndCharacterOfPosition(
+          span.expression.getEnd()
         );
-        const position = new vscode.Position(start.line, start.character);
+        const position = new vscode.Position(end.line, end.character - 1);
 
         // Clean up the variable expression by removing TypeScript operators
         const rawExpression = span.expression.getText(sourceFile);

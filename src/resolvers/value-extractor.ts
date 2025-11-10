@@ -142,6 +142,69 @@ export async function extractValuesFromDeclaration(
     console.log(`[TypeParsing] Type alias values:`, typeValues);
     return typeValues;
   }
+
+  if (ts.isPropertySignature(declaration) && declaration.type) {
+    console.log(`[TypeParsing] Property signature with type`);
+    const typeName = declaration.type.getText(sourceFile);
+    console.log(`[TypeParsing] Property type name: ${typeName}`);
+
+    // Try to find the type declaration
+    let typeDecl = findDeclarationInFile(sourceFile, typeName);
+    let typeDeclSourceFile = sourceFile;
+    let typeDeclDocument = document;
+
+    if (!typeDecl && document) {
+      console.log(`[TypeParsing] Type not found locally, checking imports`);
+      try {
+        const importDecl = findImportDeclaration(sourceFile, typeName);
+        if (importDecl) {
+          console.log(`[TypeParsing] Found import for type`);
+          const importPath = await resolveImportPath(importDecl, document);
+          if (importPath) {
+            console.log(`[TypeParsing] Resolved import path: ${importPath.fsPath}`);
+            const importedDoc = await vscode.workspace.openTextDocument(importPath);
+            const importedSourceFile = ts.createSourceFile(
+              importedDoc.fileName,
+              importedDoc.getText(),
+              ts.ScriptTarget.Latest,
+              true
+            );
+            typeDecl = findExportedDeclaration(importedSourceFile, typeName);
+            if (typeDecl) {
+              typeDeclSourceFile = importedSourceFile;
+              typeDeclDocument = importedDoc;
+              console.log(`[TypeParsing] Found type declaration in imported file`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("[TypeParsing] Property type import resolution failed:", error);
+      }
+    }
+
+    if (typeDecl) {
+      const values = await extractValuesFromDeclaration(
+        typeDecl,
+        typeDeclSourceFile,
+        typeDeclDocument
+      );
+      if (values.length > 0) {
+        console.log(`[TypeParsing] Property type values:`, values);
+        return values;
+      }
+    }
+
+    // If it's a union type node, extract directly
+    if (declaration.type && ts.isUnionTypeNode(declaration.type)) {
+      const values = await extractStringLiteralsFromType(
+        declaration.type,
+        sourceFile,
+        extractValuesFromDeclaration
+      );
+      console.log(`[TypeParsing] Property union type values:`, values);
+      return values;
+    }
+  }
   console.log(`[TypeParsing] No values extracted from declaration`);
   return [];
 }
