@@ -3,11 +3,11 @@ import * as vscode from "vscode";
 import {
   extractUnionTypesFromPosition,
   findDeclarationInFile,
-  findImportDeclaration,
   findExportedDeclaration,
+  findImportDeclaration,
 } from "../utils/typescript-helpers";
-import { extractValuesFromDeclaration } from "./value-extractor";
 import { resolveImportPath } from "./import-resolver";
+import { extractValuesFromDeclaration } from "./value-extractor";
 
 /**
  * Main entry point for resolving variable types to their possible values.
@@ -60,7 +60,11 @@ async function resolveViaAST(
     // Try to find the declaration in the current file
     const declaration = findDeclarationInFile(sourceFile, objectName);
     if (declaration) {
-      return await extractValuesFromDeclaration(declaration, sourceFile, document);
+      return await extractValuesFromDeclaration(
+        declaration,
+        sourceFile,
+        document
+      );
     }
   }
 
@@ -69,7 +73,7 @@ async function resolveViaAST(
   if (declaration) {
     // Special case: Check if this is a parameter from Object.values().forEach()
     if (ts.isParameter(declaration)) {
-      const objectValuesType = findObjectValuesEnum(declaration, sourceFile);
+      const objectValuesType = findObjectValuesEnum(declaration);
       if (objectValuesType) {
         const values = await resolveEnumOrTypeDeclaration(
           objectValuesType,
@@ -82,7 +86,11 @@ async function resolveViaAST(
       }
     }
 
-    return await extractValuesFromDeclaration(declaration, sourceFile, document);
+    return await extractValuesFromDeclaration(
+      declaration,
+      sourceFile,
+      document
+    );
   }
 
   return [];
@@ -116,7 +124,10 @@ async function resolveEnumOrTypeDeclaration(
           true
         );
 
-        const importedDecl = findExportedDeclaration(importedSourceFile, typeName);
+        const importedDecl = findExportedDeclaration(
+          importedSourceFile,
+          typeName
+        );
         if (importedDecl) {
           return await extractValuesFromDeclaration(
             importedDecl,
@@ -138,14 +149,16 @@ async function resolveEnumOrTypeDeclaration(
  * Returns the enum name if found.
  */
 function findObjectValuesEnum(
-  parameter: ts.ParameterDeclaration,
-  sourceFile: ts.SourceFile
+  parameter: ts.ParameterDeclaration
 ): string | undefined {
   // Walk up the AST to find the arrow function or function expression
   let parent = parameter.parent;
 
   // Parameter -> Arrow/Function -> CallExpression (forEach)
-  if (!parent || !(ts.isArrowFunction(parent) || ts.isFunctionExpression(parent))) {
+  if (
+    !parent ||
+    !(ts.isArrowFunction(parent) || ts.isFunctionExpression(parent))
+  ) {
     return undefined;
   }
 

@@ -281,7 +281,7 @@ async function resolveTypeReference(
     }
 
     // Fallback: Manual AST-based resolution
-    return await manualTypeResolution(typeName, document, position);
+    return await manualTypeResolution(typeName, document);
   } catch (error) {
     return [];
   }
@@ -293,8 +293,7 @@ async function resolveTypeReference(
  */
 async function manualTypeResolution(
   typeName: string,
-  document: vscode.TextDocument,
-  position: vscode.Position
+  document: vscode.TextDocument
 ): Promise<string[]> {
   const sourceFile = ts.createSourceFile(
     document.fileName,
@@ -335,7 +334,7 @@ async function manualTypeResolution(
 
     // If not found via direct import, scan all local imports
     if (!typeDecl) {
-      typeDecl = await findTypeInImports(typeName, sourceFile, document);
+      typeDecl = await findTypeInImports(typeName);
       if (typeDecl) {
         typeDeclSourceFile = typeDecl.getSourceFile();
       }
@@ -420,9 +419,7 @@ async function manualTypeResolution(
  * This is more dynamic than scanning imports and works across the entire project.
  */
 async function findTypeInImports(
-  typeName: string,
-  sourceFile: ts.SourceFile,
-  document: vscode.TextDocument
+  typeName: string
 ): Promise<ts.Node | undefined> {
   // First, try using VSCode's workspace symbols to find the type dynamically
   try {

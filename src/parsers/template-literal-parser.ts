@@ -49,15 +49,10 @@ export function findTemplateLiterals(
         (p) => p.type === "variable" && p.position
       );
       if (firstVar?.position) {
-        const lineEnd = sourceFile.getLineAndCharacterOfPosition(
-          node.getEnd()
-        );
+        const lineEnd = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
         positions.push({
           variablePosition: firstVar.position,
-          lineEndPosition: new vscode.Position(
-            lineEnd.line,
-            lineEnd.character
-          ),
+          lineEndPosition: new vscode.Position(lineEnd.line, lineEnd.character),
           templateParts,
         });
       }
@@ -73,8 +68,8 @@ export function findTemplateLiterals(
 function cleanVariableExpression(expression: string): string {
   // Remove TypeScript operators that don't affect the variable resolution
   return expression
-    .replace(/!/g, '')           // Remove non-null assertion operator
-    .replace(/\?/g, '');         // Remove optional chaining operator
+    .replace(/!/g, "") // Remove non-null assertion operator
+    .replace(/\?/g, ""); // Remove optional chaining operator
 }
 
 export function generateCombinations(

@@ -18,16 +18,12 @@ export async function extractValuesFromDeclaration(
 
   // Variable declarations: const foo = { A: "A" } as const
   if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
-    return await extractFromVariableDeclaration(
-      declaration,
-      sourceFile,
-      document
-    );
+    return await extractFromVariableDeclaration(declaration, sourceFile);
   }
 
   // Type aliases: type Foo = "A" | "B" | (typeof X)[keyof typeof X]
   if (ts.isTypeAliasDeclaration(declaration)) {
-    return await extractFromTypeAlias(declaration, sourceFile, document);
+    return await extractFromTypeAlias(declaration, sourceFile);
   }
 
   // Property signatures: interface { prop: "A" | "B" }
@@ -67,8 +63,7 @@ export function extractEnumValues(
  */
 async function extractFromVariableDeclaration(
   declaration: ts.VariableDeclaration,
-  sourceFile: ts.SourceFile,
-  document?: vscode.TextDocument
+  sourceFile: ts.SourceFile
 ): Promise<string[]> {
   const initializer = declaration.initializer!;
 
@@ -98,8 +93,7 @@ async function extractFromVariableDeclaration(
  */
 async function extractFromTypeAlias(
   declaration: ts.TypeAliasDeclaration,
-  sourceFile: ts.SourceFile,
-  document?: vscode.TextDocument
+  sourceFile: ts.SourceFile
 ): Promise<string[]> {
   const typeText = declaration.type.getText(sourceFile);
 
@@ -113,8 +107,7 @@ async function extractFromTypeAlias(
     if (objectDecl) {
       const values = await extractFromVariableDeclaration(
         objectDecl,
-        sourceFile,
-        document
+        sourceFile
       );
       if (values.length > 0) {
         return values;
@@ -204,7 +197,9 @@ export function findConstObjectDeclaration(
   let found: ts.VariableDeclaration | undefined;
 
   function visit(node: ts.Node) {
-    if (found) return;
+    if (found) {
+      return;
+    }
 
     if (ts.isVariableStatement(node)) {
       const declaration = node.declarationList.declarations.find((decl) => {
@@ -236,4 +231,3 @@ export function findConstObjectDeclaration(
   visit(sourceFile);
   return found;
 }
-
