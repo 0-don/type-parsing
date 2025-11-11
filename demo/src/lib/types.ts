@@ -32,3 +32,14 @@ export type ExchangeTypeUnion =
   | "BINANCE"
   | "BITMART"
   | "LEVEX";
+
+export type FilterType =
+  | "ALL"
+  | "ONGOING_TOURNAMENTS"
+  | "HIGH_CASHBACK"
+  | "LIMIT_ORDER"
+  | "MARKET_ORDER";
+
+export interface FilterConfig {
+  type: FilterType;
+}
