@@ -1,9 +1,11 @@
 import * as ts from "typescript";
 import * as vscode from "vscode";
 import { resolveImportPath } from "../resolvers/import-resolver";
+import { extractEnumValues } from "../resolvers/value-extractor";
 
 /**
- * Find a declaration (variable, enum, type alias) in a source file.
+ * Find a declaration (variable, enum, type alias, parameter) in a source file.
+ * This is the canonical declaration finder used throughout the codebase.
  */
 export function findDeclarationInFile(
   sourceFile: ts.SourceFile,
@@ -14,6 +16,7 @@ export function findDeclarationInFile(
   function visit(node: ts.Node) {
     if (found) return;
 
+    // Variable declarations
     if (
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
@@ -23,12 +26,20 @@ export function findDeclarationInFile(
       return;
     }
 
+    // Enum declarations
     if (ts.isEnumDeclaration(node) && node.name.text === name) {
       found = node;
       return;
     }
 
+    // Type alias declarations
     if (ts.isTypeAliasDeclaration(node) && node.name.text === name) {
+      found = node;
+      return;
+    }
+
+    // Parameters (for function parameters, arrow function params, etc.)
+    if (ts.isParameter(node) && ts.isIdentifier(node.name) && node.name.text === name) {
       found = node;
       return;
     }
@@ -310,11 +321,7 @@ async function manualTypeResolution(
   if (typeDecl) {
     // Handle enum declarations
     if (ts.isEnumDeclaration(typeDecl)) {
-      const values = typeDecl.members.map((member) =>
-        member.initializer && ts.isStringLiteral(member.initializer)
-          ? member.initializer.text
-          : member.name.getText(typeDeclSourceFile)
-      );
+      const values = extractEnumValues(typeDecl, typeDeclSourceFile);
       if (values.length > 0) {
         return values;
       }

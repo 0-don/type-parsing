@@ -1,7 +1,6 @@
 import * as ts from "typescript";
 import * as vscode from "vscode";
-import { findImportDeclaration } from "../utils/typescript-helpers";
-import { resolveImportPath } from "./import-resolver";
+import { findDeclarationInFile } from "../utils/typescript-helpers";
 
 /**
  * Extract string literal values from a TypeScript declaration node.
@@ -50,8 +49,9 @@ export async function extractValuesFromDeclaration(
 
 /**
  * Extract values from enum declarations.
+ * Exported so it can be reused in typescript-helpers.
  */
-function extractEnumValues(
+export function extractEnumValues(
   enumDecl: ts.EnumDeclaration,
   sourceFile: ts.SourceFile
 ): string[] {
@@ -137,7 +137,7 @@ async function extractFromPropertySignature(
   const typeName = declaration.type!.getText(sourceFile);
 
   // Try to find and resolve the type declaration
-  const typeDecl = findDeclaration(sourceFile, typeName);
+  const typeDecl = findDeclarationInFile(sourceFile, typeName);
   if (typeDecl) {
     const values = await extractValuesFromDeclaration(
       typeDecl,
@@ -237,40 +237,3 @@ export function findConstObjectDeclaration(
   return found;
 }
 
-/**
- * Find any declaration (variable, enum, type alias) in the source file.
- */
-function findDeclaration(
-  sourceFile: ts.SourceFile,
-  name: string
-): ts.Node | undefined {
-  let found: ts.Node | undefined;
-
-  function visit(node: ts.Node) {
-    if (found) return;
-
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === name
-    ) {
-      found = node;
-      return;
-    }
-
-    if (ts.isEnumDeclaration(node) && node.name.text === name) {
-      found = node;
-      return;
-    }
-
-    if (ts.isTypeAliasDeclaration(node) && node.name.text === name) {
-      found = node;
-      return;
-    }
-
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return found;
-}

@@ -1,7 +1,13 @@
 import * as ts from "typescript";
 import * as vscode from "vscode";
-import { extractUnionTypesFromPosition } from "../utils/typescript-helpers";
+import {
+  extractUnionTypesFromPosition,
+  findDeclarationInFile,
+  findImportDeclaration,
+  findExportedDeclaration,
+} from "../utils/typescript-helpers";
 import { extractValuesFromDeclaration } from "./value-extractor";
+import { resolveImportPath } from "./import-resolver";
 
 /**
  * Main entry point for resolving variable types to their possible values.
@@ -52,14 +58,14 @@ async function resolveViaAST(
     const [objectName] = parts;
 
     // Try to find the declaration in the current file
-    const declaration = findVariableDeclaration(sourceFile, objectName);
+    const declaration = findDeclarationInFile(sourceFile, objectName);
     if (declaration) {
       return await extractValuesFromDeclaration(declaration, sourceFile, document);
     }
   }
 
   // Handle simple identifiers
-  const declaration = findVariableDeclaration(sourceFile, varExpression);
+  const declaration = findDeclarationInFile(sourceFile, varExpression);
   if (declaration) {
     // Special case: Check if this is a parameter from Object.values().forEach()
     if (ts.isParameter(declaration)) {
@@ -91,15 +97,12 @@ async function resolveEnumOrTypeDeclaration(
   document: vscode.TextDocument
 ): Promise<string[]> {
   // First, try to find it in the current file
-  const localDecl = findVariableDeclaration(sourceFile, typeName);
+  const localDecl = findDeclarationInFile(sourceFile, typeName);
   if (localDecl) {
     return await extractValuesFromDeclaration(localDecl, sourceFile, document);
   }
 
   // If not found locally, check if it's imported
-  const { findImportDeclaration } = await import("../utils/typescript-helpers.js");
-  const { resolveImportPath } = await import("./import-resolver.js");
-
   const importDecl = findImportDeclaration(sourceFile, typeName);
   if (importDecl) {
     try {
@@ -113,7 +116,6 @@ async function resolveEnumOrTypeDeclaration(
           true
         );
 
-        const { findExportedDeclaration } = await import("../utils/typescript-helpers.js");
         const importedDecl = findExportedDeclaration(importedSourceFile, typeName);
         if (importedDecl) {
           return await extractValuesFromDeclaration(
@@ -202,52 +204,4 @@ function findObjectValuesEnum(
   }
 
   return undefined;
-}
-
-/**
- * Find a variable declaration in the source file.
- * Simplified version that only looks for variable declarations.
- */
-function findVariableDeclaration(
-  sourceFile: ts.SourceFile,
-  name: string
-): ts.Node | undefined {
-  let found: ts.Node | undefined;
-
-  function visit(node: ts.Node) {
-    if (found) return;
-
-    // Variable declarations
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === name
-    ) {
-      found = node;
-      return;
-    }
-
-    // Enum declarations
-    if (ts.isEnumDeclaration(node) && node.name.text === name) {
-      found = node;
-      return;
-    }
-
-    // Type alias declarations
-    if (ts.isTypeAliasDeclaration(node) && node.name.text === name) {
-      found = node;
-      return;
-    }
-
-    // Parameters (for destructured params, etc.)
-    if (ts.isParameter(node) && ts.isIdentifier(node.name) && node.name.text === name) {
-      found = node;
-      return;
-    }
-
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return found;
 }
