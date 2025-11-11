@@ -2,6 +2,9 @@ import * as ts from "typescript";
 import * as vscode from "vscode";
 import { resolveImportPath } from "../resolvers/import-resolver";
 
+/**
+ * Find a declaration (variable, enum, type alias) in a source file.
+ */
 export function findDeclarationInFile(
   sourceFile: ts.SourceFile,
   name: string
@@ -9,9 +12,7 @@ export function findDeclarationInFile(
   let found: ts.Node | undefined;
 
   function visit(node: ts.Node) {
-    if (found) {
-      return;
-    }
+    if (found) return;
 
     if (
       ts.isVariableDeclaration(node) &&
@@ -39,6 +40,9 @@ export function findDeclarationInFile(
   return found;
 }
 
+/**
+ * Find an import declaration that imports a specific name.
+ */
 export function findImportDeclaration(
   sourceFile: ts.SourceFile,
   varName: string
@@ -59,11 +63,15 @@ export function findImportDeclaration(
   return undefined;
 }
 
+/**
+ * Find an exported declaration in a source file.
+ */
 export function findExportedDeclaration(
   sourceFile: ts.SourceFile,
   name: string
 ): ts.Node | undefined {
   for (const statement of sourceFile.statements) {
+    // Named exports: export { Foo }
     if (
       ts.isExportDeclaration(statement) &&
       statement.exportClause &&
@@ -77,6 +85,7 @@ export function findExportedDeclaration(
       }
     }
 
+    // Direct exports: export const Foo = ...
     if (hasExportModifier(statement)) {
       if (ts.isVariableStatement(statement)) {
         const decl = statement.declarationList.declarations.find(
@@ -98,10 +107,14 @@ export function findExportedDeclaration(
     }
   }
 
+  // Fallback: look for non-exported declarations
   return findDeclarationInFile(sourceFile, name);
 }
 
-export function hasExportModifier(node: ts.Node): boolean {
+/**
+ * Check if a node has an export modifier.
+ */
+function hasExportModifier(node: ts.Node): boolean {
   return (
     (ts.canHaveModifiers(node) &&
       ts
@@ -111,83 +124,16 @@ export function hasExportModifier(node: ts.Node): boolean {
   );
 }
 
-export function findNodeAtPosition(
-  sourceFile: ts.SourceFile,
-  position: number
-): ts.Node | undefined {
-  function find(node: ts.Node): ts.Node | undefined {
-    if (position >= node.getStart() && position < node.getEnd()) {
-      return ts.forEachChild(node, find) || node;
-    }
-  }
-  return find(sourceFile);
-}
-
-export async function extractStringLiteralsFromType(
-  typeNode: ts.TypeNode,
-  sourceFile: ts.SourceFile,
-  extractValuesFromDeclaration: (
-    declaration: ts.Node,
-    sourceFile: ts.SourceFile,
-    document?: vscode.TextDocument
-  ) => Promise<string[]>
-): Promise<string[]> {
-  if (ts.isUnionTypeNode(typeNode)) {
-    return typeNode.types
-      .filter((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal))
-      .map((t) =>
-        (t as ts.LiteralTypeNode).literal.getText(sourceFile).replace(/"/g, "")
-      );
-  }
-
-  if (
-    ts.isIndexedAccessTypeNode(typeNode) &&
-    ts.isTypeQueryNode(typeNode.objectType)
-  ) {
-    const exprName = typeNode.objectType.exprName;
-    if (ts.isIdentifier(exprName)) {
-      const objectDecl = findDeclarationInFile(sourceFile, exprName.text);
-      if (objectDecl) {
-        return await extractValuesFromDeclaration(objectDecl, sourceFile);
-      }
-    }
-  }
-
-  return [];
-}
-
-export async function extractValuesFromNode(
-  node: ts.Node,
-  sourceFile: ts.SourceFile,
-  document: vscode.TextDocument,
-  extractValuesFromDeclaration: (
-    declaration: ts.Node,
-    sourceFile: ts.SourceFile,
-    document?: vscode.TextDocument
-  ) => Promise<string[]>
-): Promise<string[]> {
-  let current: ts.Node | undefined = node;
-
-  while (current) {
-    const values = await extractValuesFromDeclaration(
-      current,
-      sourceFile,
-      document
-    );
-    if (values.length > 0) {
-      return values;
-    }
-    current = current.parent;
-  }
-
-  return [];
-}
-
+/**
+ * Main function to extract union type values from a position in a document.
+ * This is the primary resolution strategy that uses VSCode's language service.
+ */
 export async function extractUnionTypesFromPosition(
   document: vscode.TextDocument,
   position: vscode.Position
 ): Promise<string[]> {
   try {
+    // Get hover information from VSCode's language service
     const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
       "vscode.executeHoverProvider",
       document.uri,
@@ -195,7 +141,6 @@ export async function extractUnionTypesFromPosition(
     );
 
     if (!hovers || hovers.length === 0) {
-      console.log("[TypeParsing] No hover information available");
       return [];
     }
 
@@ -203,16 +148,13 @@ export async function extractUnionTypesFromPosition(
       .map((c) => (typeof c === "string" ? c : c.value))
       .join("\n");
 
-    // If hover is still loading, wait a bit and try again
+    // If hover is still loading, wait and retry
     if (hoverText.includes("loading")) {
-      console.log("[TypeParsing] Hover still loading, retrying...");
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const retriedHovers = await vscode.commands.executeCommand<vscode.Hover[]>(
-        "vscode.executeHoverProvider",
-        document.uri,
-        position
-      );
+      const retriedHovers = await vscode.commands.executeCommand<
+        vscode.Hover[]
+      >("vscode.executeHoverProvider", document.uri, position);
 
       if (retriedHovers && retriedHovers.length > 0) {
         hoverText = retriedHovers[0].contents
@@ -221,286 +163,309 @@ export async function extractUnionTypesFromPosition(
       }
     }
 
-    console.log("[TypeParsing] Hover text:", hoverText);
-
     // Skip if still loading or shows 'any'
     if (hoverText.includes("loading") || hoverText.includes(") any")) {
-      console.log("[TypeParsing] Hover not ready or shows 'any', falling back to AST parsing");
       return [];
     }
 
-    // Extract union type values from hover text
-    // Matches patterns like: code: "DE" | "EN" or (property) code: "DE" | "EN"
+    // Extract union type values directly from hover text: "A" | "B" | "C"
     const unionMatches = Array.from(hoverText.matchAll(/"([^"]+)"/g));
-    console.log("[TypeParsing] Union matches found:", unionMatches.length);
 
     if (unionMatches.length > 1) {
-      const values = unionMatches.map((match) => match[1]);
-      console.log("[TypeParsing] Extracted union values:", values);
-      return values;
+      return unionMatches.map((match) => match[1]);
     }
 
-    // Check if it's a single literal type
+    // Check if it's a single literal type: "value"
     const literalMatch = hoverText.match(/:\s*"([^"]+)"/);
     if (literalMatch) {
-      console.log("[TypeParsing] Single literal value:", literalMatch[1]);
       return [literalMatch[1]];
     }
 
-    // If hover shows a type reference (e.g., "type: FilterType"), try to get type definition
+    // If hover shows a type reference (e.g., "type: FilterType"), resolve it
     const typeRefMatch = hoverText.match(/:\s*(\w+)\s*$/m);
     if (typeRefMatch) {
       const typeName = typeRefMatch[1];
-      console.log("[TypeParsing] Found type reference:", typeName);
 
-      // Don't try to resolve primitive types or common generic types
-      if (['string', 'number', 'boolean', 'any', 'unknown', 'void', 'never', 'Array', 'Promise'].includes(typeName)) {
-        console.log("[TypeParsing] Skipping primitive/generic type:", typeName);
+      // Don't try to resolve primitive types
+      const primitiveTypes = [
+        "string",
+        "number",
+        "boolean",
+        "any",
+        "unknown",
+        "void",
+        "never",
+        "Array",
+        "Promise",
+      ];
+      if (primitiveTypes.includes(typeName)) {
         return [];
       }
 
-      // Use VS Code's type definition provider to get the expanded type
-      try {
-        const typeDefinitions = await vscode.commands.executeCommand<
-          (vscode.Location | vscode.LocationLink)[]
-        >("vscode.executeTypeDefinitionProvider", document.uri, position);
+      // Try to resolve the type using type definitions or manual resolution
+      return await resolveTypeReference(typeName, document, position);
+    }
 
-        console.log("[TypeParsing] Type definitions found:", typeDefinitions?.length ?? 0);
+    return [];
+  } catch (error) {
+    return [];
+  }
+}
 
-        if (typeDefinitions && typeDefinitions.length > 0) {
-          const typeDef = typeDefinitions[0];
-          const typeDefUri = 'targetUri' in typeDef ? typeDef.targetUri : typeDef.uri;
-          const typeDefRange = 'targetRange' in typeDef ? typeDef.targetRange : typeDef.range;
+/**
+ * Resolve a type reference to its union values.
+ * Uses VSCode's type definition provider or falls back to manual AST resolution.
+ */
+async function resolveTypeReference(
+  typeName: string,
+  document: vscode.TextDocument,
+  position: vscode.Position
+): Promise<string[]> {
+  try {
+    // Try VSCode's type definition provider first
+    const typeDefinitions = await vscode.commands.executeCommand<
+      (vscode.Location | vscode.LocationLink)[]
+    >("vscode.executeTypeDefinitionProvider", document.uri, position);
 
-          if (typeDefUri && typeDefRange) {
-            console.log("[TypeParsing] Found type definition, getting hover at type definition");
-            const typeDefDoc = await vscode.workspace.openTextDocument(typeDefUri);
+    if (typeDefinitions && typeDefinitions.length > 0) {
+      const typeDef = typeDefinitions[0];
+      const typeDefUri =
+        "targetUri" in typeDef ? typeDef.targetUri : typeDef.uri;
+      const typeDefRange =
+        "targetRange" in typeDef ? typeDef.targetRange : typeDef.range;
 
-            // Get hover at the type definition location
-            const typeDefHovers = await vscode.commands.executeCommand<vscode.Hover[]>(
-              "vscode.executeHoverProvider",
-              typeDefUri,
-              typeDefRange.start
-            );
+      if (typeDefUri && typeDefRange) {
+        const typeDefDoc = await vscode.workspace.openTextDocument(typeDefUri);
+        const typeDefText = typeDefDoc.getText(typeDefRange);
 
-            if (typeDefHovers && typeDefHovers.length > 0) {
-              const typeDefHoverText = typeDefHovers[0].contents
-                .map((c) => (typeof c === "string" ? c : c.value))
-                .join("\n");
-
-              console.log("[TypeParsing] Type definition hover:", typeDefHoverText);
-
-              // Try to extract union values from the type definition hover
-              const typeDefUnionMatches = Array.from(typeDefHoverText.matchAll(/"([^"]+)"/g));
-              if (typeDefUnionMatches.length > 1) {
-                const values = typeDefUnionMatches.map((match) => match[1]);
-                console.log("[TypeParsing] Extracted union values from type definition:", values);
-                return values;
-              }
-
-              // Try to parse inline union type like: type FilterType = "A" | "B" | "C"
-              const inlineUnionMatch = typeDefHoverText.match(/=\s*(["'][^"']+["'](?:\s*\|\s*["'][^"']+["'])+)/);
-              if (inlineUnionMatch) {
-                const unionStr = inlineUnionMatch[1];
-                const values = Array.from(unionStr.matchAll(/["']([^"']+)["']/g)).map(m => m[1]);
-                console.log("[TypeParsing] Extracted union values from inline type:", values);
-                return values;
-              }
-            }
-
-            // Fallback: Read the type definition from the document directly
-            const typeDefText = typeDefDoc.getText(typeDefRange);
-            console.log("[TypeParsing] Type definition text:", typeDefText);
-
-            const directUnionMatches = Array.from(typeDefText.matchAll(/"([^"]+)"/g));
-            if (directUnionMatches.length > 1) {
-              const values = directUnionMatches.map((match) => match[1]);
-              console.log("[TypeParsing] Extracted union values from type definition text:", values);
-              return values;
-            }
-          }
-        } else {
-          console.log("[TypeParsing] No type definitions found, trying manual resolution");
-
-          // Fallback: manually find and resolve the type
-          const sourceFile = ts.createSourceFile(
-            document.fileName,
-            document.getText(),
-            ts.ScriptTarget.Latest,
-            true
-          );
-
-          // Look for the type in the current file or imports
-          let typeDecl = findDeclarationInFile(sourceFile, typeName);
-          let typeDeclSourceFile = sourceFile;
-          let typeDeclDocument = document;
-
-          if (!typeDecl) {
-            console.log("[TypeParsing] Type not found locally, checking imports");
-
-            // Try to find direct import
-            let importDecl = findImportDeclaration(sourceFile, typeName);
-
-            if (importDecl) {
-              // Type is directly imported, resolve it
-              console.log(`[TypeParsing] Type '${typeName}' is directly imported, resolving...`);
-              try {
-                const importPath = await resolveImportPath(importDecl, document);
-                if (importPath) {
-                  console.log("[TypeParsing] Resolved direct import path:", importPath.fsPath);
-                  const importedDoc = await vscode.workspace.openTextDocument(importPath);
-                  const importedSourceFile = ts.createSourceFile(
-                    importedDoc.fileName,
-                    importedDoc.getText(),
-                    ts.ScriptTarget.Latest,
-                    true
-                  );
-                  typeDecl = findExportedDeclaration(importedSourceFile, typeName);
-                  if (typeDecl) {
-                    typeDeclSourceFile = importedSourceFile;
-                    typeDeclDocument = importedDoc;
-                    console.log("[TypeParsing] ✓ Found type declaration via direct import");
-                  }
-                }
-              } catch (error) {
-                console.error("[TypeParsing] Direct import resolution failed:", error);
-              }
-            }
-
-            // If not found via direct import, scan all import statements to find which file might contain this type
-            if (!typeDecl && !importDecl) {
-              console.log("[TypeParsing] Type not directly imported, scanning all type imports");
-
-              // Collect all import statements (excluding node_modules)
-              const typeImports: ts.ImportDeclaration[] = [];
-              for (const statement of sourceFile.statements) {
-                if (ts.isImportDeclaration(statement)) {
-                  const moduleSpec = (statement.moduleSpecifier as ts.StringLiteral).text;
-
-                  // Include local imports: relative paths, path aliases, etc.
-                  // Exclude node_modules by checking if it doesn't start with a letter-only package name
-                  if (moduleSpec.startsWith('./') ||
-                      moduleSpec.startsWith('../') ||
-                      moduleSpec.startsWith('@/') ||
-                      moduleSpec.startsWith('~/') ||
-                      moduleSpec.startsWith('src/')) {
-                    typeImports.push(statement);
-                  }
-                }
-              }
-
-              console.log(`[TypeParsing] Found ${typeImports.length} local imports to check`);
-
-              // Try each type import to find the type
-              for (const importStmt of typeImports) {
-                const moduleSpecifier = (importStmt.moduleSpecifier as ts.StringLiteral).text;
-                console.log("[TypeParsing] Checking import module:", moduleSpecifier);
-
-                try {
-                  // Use the existing import resolver which handles tsconfig paths
-                  const importPath = await resolveImportPath(importStmt, document);
-
-                  if (importPath) {
-                    console.log("[TypeParsing] Resolved import path:", importPath.fsPath);
-                    const importedDoc = await vscode.workspace.openTextDocument(importPath);
-                    const importedSourceFile = ts.createSourceFile(
-                      importedDoc.fileName,
-                      importedDoc.getText(),
-                      ts.ScriptTarget.Latest,
-                      true
-                    );
-                    console.log(`[TypeParsing] Looking for '${typeName}' in imported file`);
-                    const foundTypeDecl = findExportedDeclaration(importedSourceFile, typeName);
-                    if (foundTypeDecl) {
-                      typeDecl = foundTypeDecl;
-                      typeDeclSourceFile = importedSourceFile;
-                      typeDeclDocument = importedDoc;
-                      console.log("[TypeParsing] ✓ Found type declaration in imported file:", importPath.fsPath);
-                      break;
-                    } else {
-                      console.log(`[TypeParsing] ✗ Type '${typeName}' not found in ${moduleSpecifier}`);
-                    }
-                  } else {
-                    console.log(`[TypeParsing] ✗ Could not resolve import path for ${moduleSpecifier}`);
-                  }
-                } catch (error) {
-                  console.error("[TypeParsing] Import resolution failed for", moduleSpecifier, error);
-                }
-              }
-            }
-          }
-
-          // Extract values from the type declaration
-          if (typeDecl) {
-            if (ts.isTypeAliasDeclaration(typeDecl) && typeDecl.type) {
-              const typeText = typeDecl.type.getText(typeDeclSourceFile);
-              console.log("[TypeParsing] Type alias text:", typeText);
-
-              // Import the helper to resolve const object declarations
-              const { findConstObjectDeclaration } = await import("../resolvers/value-extractor.js");
-
-              // Handle the pattern: (typeof X)[keyof typeof X]
-              const typeofMatch = typeText.match(/\(typeof\s+(\w+)\)\[keyof\s+typeof\s+\w+\]/);
-              if (typeofMatch) {
-                const objectName = typeofMatch[1];
-                console.log("[TypeParsing] Found typeof pattern, looking for const object:", objectName);
-
-                // Find the const object declaration using the improved helper
-                const objectDecl = findConstObjectDeclaration(typeDeclSourceFile, objectName);
-                if (objectDecl && objectDecl.initializer) {
-                  console.log("[TypeParsing] Found const object declaration");
-
-                  // Handle both direct object literals and "as const" expressions
-                  let objectLiteral: ts.ObjectLiteralExpression | undefined;
-                  if (ts.isObjectLiteralExpression(objectDecl.initializer)) {
-                    objectLiteral = objectDecl.initializer;
-                  } else if (ts.isAsExpression(objectDecl.initializer) &&
-                             ts.isObjectLiteralExpression(objectDecl.initializer.expression)) {
-                    objectLiteral = objectDecl.initializer.expression;
-                  }
-
-                  if (objectLiteral) {
-                    const values = objectLiteral.properties
-                      .filter(ts.isPropertyAssignment)
-                      .map((prop) => prop.name.getText(typeDeclSourceFile).replace(/"/g, ""));
-                    if (values.length > 0) {
-                      console.log("[TypeParsing] Extracted values from typeof pattern:", values);
-                      return values;
-                    }
-                  }
-                }
-              }
-
-              // Fallback: try direct union type extraction
-              const values = await extractStringLiteralsFromType(
-                typeDecl.type,
-                typeDeclSourceFile,
-                async (decl, sf, doc) => {
-                  // Inline simple extraction to avoid circular dependency
-                  if (ts.isTypeAliasDeclaration(decl) && ts.isUnionTypeNode(decl.type)) {
-                    return decl.type.types
-                      .filter((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal))
-                      .map((t) => (t as ts.LiteralTypeNode).literal.getText(sf).replace(/"/g, ""));
-                  }
-                  return [];
-                }
-              );
-              if (values.length > 0) {
-                console.log("[TypeParsing] Extracted values from manual resolution:", values);
-                return values;
-              }
-            }
-          }
+        // Extract union values directly from the type definition text
+        const unionMatches = Array.from(typeDefText.matchAll(/"([^"]+)"/g));
+        if (unionMatches.length > 1) {
+          return unionMatches.map((match) => match[1]);
         }
-      } catch (error) {
-        console.error("[TypeParsing] Type definition resolution failed:", error);
       }
     }
 
-    console.log("[TypeParsing] No union or literal types found in hover text");
-    return [];
+    // Fallback: Manual AST-based resolution
+    return await manualTypeResolution(typeName, document, position);
   } catch (error) {
-    console.error("[TypeParsing] Extract union types from position failed:", error);
     return [];
   }
+}
+
+/**
+ * Manual type resolution using AST parsing.
+ * This is the fallback when language service doesn't provide type definitions.
+ */
+async function manualTypeResolution(
+  typeName: string,
+  document: vscode.TextDocument,
+  position: vscode.Position
+): Promise<string[]> {
+  const sourceFile = ts.createSourceFile(
+    document.fileName,
+    document.getText(),
+    ts.ScriptTarget.Latest,
+    true
+  );
+
+  // Look for the type in the current file or imports
+  let typeDecl = findDeclarationInFile(sourceFile, typeName);
+  let typeDeclSourceFile = sourceFile;
+
+  if (!typeDecl) {
+    // Check if the type is directly imported
+    const importDecl = findImportDeclaration(sourceFile, typeName);
+    if (importDecl) {
+      try {
+        const importPath = await resolveImportPath(importDecl, document);
+        if (importPath) {
+          const importedDoc = await vscode.workspace.openTextDocument(importPath);
+          const importedSourceFile = ts.createSourceFile(
+            importedDoc.fileName,
+            importedDoc.getText(),
+            ts.ScriptTarget.Latest,
+            true
+          );
+          typeDecl = findExportedDeclaration(importedSourceFile, typeName);
+          if (typeDecl) {
+            typeDeclSourceFile = importedSourceFile;
+          }
+        }
+      } catch (error) {
+        // Import resolution failed, continue with fallback
+      }
+    }
+
+    // If not found via direct import, scan all local imports
+    if (!typeDecl) {
+      typeDecl = await findTypeInImports(typeName, sourceFile, document);
+      if (typeDecl) {
+        typeDeclSourceFile = typeDecl.getSourceFile();
+      }
+    }
+  }
+
+  // Extract values from the type declaration
+  if (typeDecl) {
+    // Handle enum declarations
+    if (ts.isEnumDeclaration(typeDecl)) {
+      const values = typeDecl.members.map((member) =>
+        member.initializer && ts.isStringLiteral(member.initializer)
+          ? member.initializer.text
+          : member.name.getText(typeDeclSourceFile)
+      );
+      if (values.length > 0) {
+        return values;
+      }
+    }
+
+    // Handle type alias declarations
+    if (ts.isTypeAliasDeclaration(typeDecl) && typeDecl.type) {
+      const typeText = typeDecl.type.getText(typeDeclSourceFile);
+
+      // Handle typeof pattern: (typeof X)[keyof typeof X]
+      const typeofMatch = typeText.match(/\(typeof\s+(\w+)\)\[keyof\s+typeof\s+\w+\]/);
+      if (typeofMatch) {
+        const objectName = typeofMatch[1];
+
+        const { findConstObjectDeclaration } = await import(
+          "../resolvers/value-extractor.js"
+        );
+        const objectDecl = findConstObjectDeclaration(typeDeclSourceFile, objectName);
+        if (objectDecl && objectDecl.initializer) {
+          let objectLiteral: ts.ObjectLiteralExpression | undefined;
+          if (ts.isObjectLiteralExpression(objectDecl.initializer)) {
+            objectLiteral = objectDecl.initializer;
+          } else if (
+            ts.isAsExpression(objectDecl.initializer) &&
+            ts.isObjectLiteralExpression(objectDecl.initializer.expression)
+          ) {
+            objectLiteral = objectDecl.initializer.expression;
+          }
+
+          if (objectLiteral) {
+            const values = objectLiteral.properties
+              .filter(ts.isPropertyAssignment)
+              .map((prop) => prop.name.getText(typeDeclSourceFile).replace(/"/g, ""));
+            if (values.length > 0) {
+              return values;
+            }
+          }
+        }
+      }
+
+      // Handle direct union types: "A" | "B" | "C"
+      if (ts.isUnionTypeNode(typeDecl.type)) {
+        const values = typeDecl.type.types
+          .filter((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal))
+          .map((t) =>
+            (t as ts.LiteralTypeNode).literal
+              .getText(typeDeclSourceFile)
+              .replace(/"/g, "")
+          );
+        if (values.length > 0) {
+          return values;
+        }
+      }
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Search for a type declaration using VSCode's workspace symbol search.
+ * This is more dynamic than scanning imports and works across the entire project.
+ */
+async function findTypeInImports(
+  typeName: string,
+  sourceFile: ts.SourceFile,
+  document: vscode.TextDocument
+): Promise<ts.Node | undefined> {
+  // First, try using VSCode's workspace symbols to find the type dynamically
+  try {
+    const symbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+      "vscode.executeWorkspaceSymbolProvider",
+      typeName
+    );
+
+    if (symbols && symbols.length > 0) {
+      // Look for exact type alias or interface matches
+      const typeSymbol = symbols.find(
+        (s) =>
+          s.name === typeName &&
+          (s.kind === vscode.SymbolKind.TypeParameter ||
+            s.kind === vscode.SymbolKind.Interface ||
+            s.kind === vscode.SymbolKind.Enum ||
+            s.kind === vscode.SymbolKind.Class)
+      );
+
+      if (typeSymbol) {
+        try {
+          const symbolDoc = await vscode.workspace.openTextDocument(typeSymbol.location.uri);
+          const symbolSourceFile = ts.createSourceFile(
+            symbolDoc.fileName,
+            symbolDoc.getText(),
+            ts.ScriptTarget.Latest,
+            true
+          );
+          const foundDecl = findExportedDeclaration(symbolSourceFile, typeName);
+          if (foundDecl) {
+            return foundDecl;
+          }
+        } catch {
+          // Symbol not accessible, continue
+        }
+      }
+    }
+  } catch {
+    // Workspace symbol search not available, fall back to import scanning
+  }
+
+  // Fallback: Scan local imports
+  const localImports: ts.ImportDeclaration[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const moduleSpec = (statement.moduleSpecifier as ts.StringLiteral).text;
+
+      // Only check local imports (relative paths and path aliases)
+      if (
+        moduleSpec.startsWith("./") ||
+        moduleSpec.startsWith("../") ||
+        moduleSpec.startsWith("@/") ||
+        moduleSpec.startsWith("~/") ||
+        moduleSpec.startsWith("src/")
+      ) {
+        localImports.push(statement);
+      }
+    }
+  }
+
+  for (const importStmt of localImports) {
+    try {
+      const importPath = await resolveImportPath(importStmt, document);
+      if (importPath) {
+        const importedDoc = await vscode.workspace.openTextDocument(importPath);
+        const importedSourceFile = ts.createSourceFile(
+          importedDoc.fileName,
+          importedDoc.getText(),
+          ts.ScriptTarget.Latest,
+          true
+        );
+        const foundTypeDecl = findExportedDeclaration(
+          importedSourceFile,
+          typeName
+        );
+        if (foundTypeDecl) {
+          return foundTypeDecl;
+        }
+      }
+    } catch (error) {
+      // Import resolution failed, continue with next import
+    }
+  }
+
+  return undefined;
 }

@@ -46,17 +46,12 @@ async function resolveWithTypeScript(
       );
 
     if (!configPath) {
-      console.log("[TypeParsing] No config file found");
       return undefined;
     }
 
     // Read and parse the config file
     const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
     if (configFile.error) {
-      console.log(
-        "[TypeParsing] Error reading config:",
-        configFile.error.messageText
-      );
       return undefined;
     }
 
@@ -66,10 +61,6 @@ async function resolveWithTypeScript(
       ts.sys,
       path.dirname(configPath)
     );
-
-    if (parsedConfig.errors.length > 0) {
-      console.log("[TypeParsing] Config parse errors:", parsedConfig.errors);
-    }
 
     // Use TypeScript's module resolution
     const resolved = ts.resolveModuleName(
@@ -81,16 +72,11 @@ async function resolveWithTypeScript(
 
     if (resolved.resolvedModule) {
       const resolvedPath = resolved.resolvedModule.resolvedFileName;
-      console.log(
-        `[TypeParsing] TypeScript resolved ${importPath} -> ${resolvedPath}`
-      );
       return vscode.Uri.file(resolvedPath);
     }
 
-    console.log(`[TypeParsing] TypeScript could not resolve: ${importPath}`);
     return undefined;
   } catch (error) {
-    console.error("[TypeParsing] TypeScript resolution error:", error);
     return undefined;
   }
 }
