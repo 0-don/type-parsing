@@ -205,6 +205,25 @@ export async function extractValuesFromDeclaration(
       return values;
     }
   }
+
+  // Handle parameters with binding patterns (destructured parameters)
+  if (ts.isParameter(declaration)) {
+    console.log(`[TypeParsing] Parameter declaration`);
+
+    if (declaration.type) {
+      console.log(`[TypeParsing] Parameter has explicit type annotation`);
+      const values = await extractStringLiteralsFromType(
+        declaration.type,
+        sourceFile,
+        extractValuesFromDeclaration
+      );
+      if (values.length > 0) {
+        console.log(`[TypeParsing] Parameter type values:`, values);
+        return values;
+      }
+    }
+  }
+
   console.log(`[TypeParsing] No values extracted from declaration`);
   return [];
 }

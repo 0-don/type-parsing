@@ -23,16 +23,14 @@ export async function resolveVariable(
   console.log(`[TypeParsing] Resolving variable: ${varExpression}`);
 
   if (position) {
-    // For property access (e.g., lang.code), directly extract union types from hover
-    if (varExpression.includes(".")) {
-      console.log(
-        `[TypeParsing] Property access detected, extracting union types from position`
-      );
-      const unionValues = await extractUnionTypesFromPosition(document, position);
-      if (unionValues.length > 0) {
-        console.log(`[TypeParsing] Union values from position:`, unionValues);
-        return unionValues;
-      }
+    // Try to extract union types from hover - works for both property access and simple identifiers
+    console.log(
+      `[TypeParsing] Extracting union types from position for: ${varExpression}`
+    );
+    const unionValues = await extractUnionTypesFromPosition(document, position);
+    if (unionValues.length > 0) {
+      console.log(`[TypeParsing] Union values from position:`, unionValues);
+      return unionValues;
     }
 
     // First try to use TypeScript's language service - this handles most cases
