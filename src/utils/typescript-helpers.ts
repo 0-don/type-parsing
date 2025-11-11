@@ -1,5 +1,6 @@
 import * as ts from "typescript";
 import * as vscode from "vscode";
+import { resolveImportPath } from "../resolvers/import-resolver";
 
 export function findDeclarationInFile(
   sourceFile: ts.SourceFile,
@@ -340,22 +341,55 @@ export async function extractUnionTypesFromPosition(
             // Try to find direct import
             let importDecl = findImportDeclaration(sourceFile, typeName);
 
-            // If not found, scan all import statements to find which file might contain this type
-            if (!importDecl) {
+            if (importDecl) {
+              // Type is directly imported, resolve it
+              console.log(`[TypeParsing] Type '${typeName}' is directly imported, resolving...`);
+              try {
+                const importPath = await resolveImportPath(importDecl, document);
+                if (importPath) {
+                  console.log("[TypeParsing] Resolved direct import path:", importPath.fsPath);
+                  const importedDoc = await vscode.workspace.openTextDocument(importPath);
+                  const importedSourceFile = ts.createSourceFile(
+                    importedDoc.fileName,
+                    importedDoc.getText(),
+                    ts.ScriptTarget.Latest,
+                    true
+                  );
+                  typeDecl = findExportedDeclaration(importedSourceFile, typeName);
+                  if (typeDecl) {
+                    typeDeclSourceFile = importedSourceFile;
+                    typeDeclDocument = importedDoc;
+                    console.log("[TypeParsing] ✓ Found type declaration via direct import");
+                  }
+                }
+              } catch (error) {
+                console.error("[TypeParsing] Direct import resolution failed:", error);
+              }
+            }
+
+            // If not found via direct import, scan all import statements to find which file might contain this type
+            if (!typeDecl && !importDecl) {
               console.log("[TypeParsing] Type not directly imported, scanning all type imports");
 
-              // Collect all import statements with type imports
+              // Collect all import statements (excluding node_modules)
               const typeImports: ts.ImportDeclaration[] = [];
               for (const statement of sourceFile.statements) {
                 if (ts.isImportDeclaration(statement)) {
                   const moduleSpec = (statement.moduleSpecifier as ts.StringLiteral).text;
 
-                  // Prioritize local relative imports over node_modules
-                  if (moduleSpec.startsWith('./') || moduleSpec.startsWith('../')) {
+                  // Include local imports: relative paths, path aliases, etc.
+                  // Exclude node_modules by checking if it doesn't start with a letter-only package name
+                  if (moduleSpec.startsWith('./') ||
+                      moduleSpec.startsWith('../') ||
+                      moduleSpec.startsWith('@/') ||
+                      moduleSpec.startsWith('~/') ||
+                      moduleSpec.startsWith('src/')) {
                     typeImports.push(statement);
                   }
                 }
               }
+
+              console.log(`[TypeParsing] Found ${typeImports.length} local imports to check`);
 
               // Try each type import to find the type
               for (const importStmt of typeImports) {
@@ -363,27 +397,8 @@ export async function extractUnionTypesFromPosition(
                 console.log("[TypeParsing] Checking import module:", moduleSpecifier);
 
                 try {
-                  let importPath: vscode.Uri | undefined;
-
-                  if (moduleSpecifier.startsWith('./') || moduleSpecifier.startsWith('../')) {
-                    // Relative import
-                    const currentDir = vscode.Uri.file(document.fileName).with({ path: document.fileName.substring(0, document.fileName.lastIndexOf('/')) });
-                    const resolvedPath = vscode.Uri.joinPath(currentDir, moduleSpecifier + '.ts');
-
-                    try {
-                      await vscode.workspace.fs.stat(resolvedPath);
-                      importPath = resolvedPath;
-                    } catch {
-                      // Try without .ts extension (might be .tsx or index.ts)
-                      const tsxPath = vscode.Uri.joinPath(currentDir, moduleSpecifier + '.tsx');
-                      try {
-                        await vscode.workspace.fs.stat(tsxPath);
-                        importPath = tsxPath;
-                      } catch {
-                        // Ignore, will try other methods
-                      }
-                    }
-                  }
+                  // Use the existing import resolver which handles tsconfig paths
+                  const importPath = await resolveImportPath(importStmt, document);
 
                   if (importPath) {
                     console.log("[TypeParsing] Resolved import path:", importPath.fsPath);
@@ -394,14 +409,19 @@ export async function extractUnionTypesFromPosition(
                       ts.ScriptTarget.Latest,
                       true
                     );
+                    console.log(`[TypeParsing] Looking for '${typeName}' in imported file`);
                     const foundTypeDecl = findExportedDeclaration(importedSourceFile, typeName);
                     if (foundTypeDecl) {
                       typeDecl = foundTypeDecl;
                       typeDeclSourceFile = importedSourceFile;
                       typeDeclDocument = importedDoc;
-                      console.log("[TypeParsing] Found type declaration in imported file:", importPath.fsPath);
+                      console.log("[TypeParsing] ✓ Found type declaration in imported file:", importPath.fsPath);
                       break;
+                    } else {
+                      console.log(`[TypeParsing] ✗ Type '${typeName}' not found in ${moduleSpecifier}`);
                     }
+                  } else {
+                    console.log(`[TypeParsing] ✗ Could not resolve import path for ${moduleSpecifier}`);
                   }
                 } catch (error) {
                   console.error("[TypeParsing] Import resolution failed for", moduleSpecifier, error);
