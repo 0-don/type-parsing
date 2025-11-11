@@ -192,6 +192,19 @@ export async function extractUnionTypesFromPosition(
       return [literalMatch[1]];
     }
 
+    // Check for enum member reference: EnumName.MEMBER
+    const enumMemberMatch = hoverText.match(/:\s*(\w+)\.(\w+)\s*$/m);
+    if (enumMemberMatch) {
+      const enumName = enumMemberMatch[1];
+      const memberName = enumMemberMatch[2];
+
+      // Resolve the enum and return all its values
+      const enumValues = await resolveTypeReference(enumName, document, position);
+      if (enumValues.length > 0) {
+        return enumValues;
+      }
+    }
+
     // If hover shows a type reference (e.g., "type: FilterType"), resolve it
     const typeRefMatch = hoverText.match(/:\s*(\w+)\s*$/m);
     if (typeRefMatch) {
