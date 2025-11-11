@@ -433,6 +433,45 @@ export async function extractUnionTypesFromPosition(
           // Extract values from the type declaration
           if (typeDecl) {
             if (ts.isTypeAliasDeclaration(typeDecl) && typeDecl.type) {
+              const typeText = typeDecl.type.getText(typeDeclSourceFile);
+              console.log("[TypeParsing] Type alias text:", typeText);
+
+              // Import the helper to resolve const object declarations
+              const { findConstObjectDeclaration } = await import("../resolvers/value-extractor.js");
+
+              // Handle the pattern: (typeof X)[keyof typeof X]
+              const typeofMatch = typeText.match(/\(typeof\s+(\w+)\)\[keyof\s+typeof\s+\w+\]/);
+              if (typeofMatch) {
+                const objectName = typeofMatch[1];
+                console.log("[TypeParsing] Found typeof pattern, looking for const object:", objectName);
+
+                // Find the const object declaration using the improved helper
+                const objectDecl = findConstObjectDeclaration(typeDeclSourceFile, objectName);
+                if (objectDecl && objectDecl.initializer) {
+                  console.log("[TypeParsing] Found const object declaration");
+
+                  // Handle both direct object literals and "as const" expressions
+                  let objectLiteral: ts.ObjectLiteralExpression | undefined;
+                  if (ts.isObjectLiteralExpression(objectDecl.initializer)) {
+                    objectLiteral = objectDecl.initializer;
+                  } else if (ts.isAsExpression(objectDecl.initializer) &&
+                             ts.isObjectLiteralExpression(objectDecl.initializer.expression)) {
+                    objectLiteral = objectDecl.initializer.expression;
+                  }
+
+                  if (objectLiteral) {
+                    const values = objectLiteral.properties
+                      .filter(ts.isPropertyAssignment)
+                      .map((prop) => prop.name.getText(typeDeclSourceFile).replace(/"/g, ""));
+                    if (values.length > 0) {
+                      console.log("[TypeParsing] Extracted values from typeof pattern:", values);
+                      return values;
+                    }
+                  }
+                }
+              }
+
+              // Fallback: try direct union type extraction
               const values = await extractStringLiteralsFromType(
                 typeDecl.type,
                 typeDeclSourceFile,
