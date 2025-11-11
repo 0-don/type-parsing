@@ -14,7 +14,9 @@ export function findDeclarationInFile(
   let found: ts.Node | undefined;
 
   function visit(node: ts.Node) {
-    if (found) return;
+    if (found) {
+      return;
+    }
 
     // Variable declarations
     if (
@@ -39,7 +41,11 @@ export function findDeclarationInFile(
     }
 
     // Parameters (for function parameters, arrow function params, etc.)
-    if (ts.isParameter(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+    if (
+      ts.isParameter(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name
+    ) {
       found = node;
       return;
     }
@@ -199,7 +205,11 @@ export async function extractUnionTypesFromPosition(
       const memberName = enumMemberMatch[2];
 
       // Resolve the enum and return all its values
-      const enumValues = await resolveTypeReference(enumName, document, position);
+      const enumValues = await resolveTypeReference(
+        enumName,
+        document,
+        position
+      );
       if (enumValues.length > 0) {
         return enumValues;
       }
@@ -304,7 +314,9 @@ async function manualTypeResolution(
       try {
         const importPath = await resolveImportPath(importDecl, document);
         if (importPath) {
-          const importedDoc = await vscode.workspace.openTextDocument(importPath);
+          const importedDoc = await vscode.workspace.openTextDocument(
+            importPath
+          );
           const importedSourceFile = ts.createSourceFile(
             importedDoc.fileName,
             importedDoc.getText(),
@@ -345,14 +357,19 @@ async function manualTypeResolution(
       const typeText = typeDecl.type.getText(typeDeclSourceFile);
 
       // Handle typeof pattern: (typeof X)[keyof typeof X]
-      const typeofMatch = typeText.match(/\(typeof\s+(\w+)\)\[keyof\s+typeof\s+\w+\]/);
+      const typeofMatch = typeText.match(
+        /\(typeof\s+(\w+)\)\[keyof\s+typeof\s+\w+\]/
+      );
       if (typeofMatch) {
         const objectName = typeofMatch[1];
 
         const { findConstObjectDeclaration } = await import(
           "../resolvers/value-extractor.js"
         );
-        const objectDecl = findConstObjectDeclaration(typeDeclSourceFile, objectName);
+        const objectDecl = findConstObjectDeclaration(
+          typeDeclSourceFile,
+          objectName
+        );
         if (objectDecl && objectDecl.initializer) {
           let objectLiteral: ts.ObjectLiteralExpression | undefined;
           if (ts.isObjectLiteralExpression(objectDecl.initializer)) {
@@ -367,7 +384,9 @@ async function manualTypeResolution(
           if (objectLiteral) {
             const values = objectLiteral.properties
               .filter(ts.isPropertyAssignment)
-              .map((prop) => prop.name.getText(typeDeclSourceFile).replace(/"/g, ""));
+              .map((prop) =>
+                prop.name.getText(typeDeclSourceFile).replace(/"/g, "")
+              );
             if (values.length > 0) {
               return values;
             }
@@ -378,7 +397,9 @@ async function manualTypeResolution(
       // Handle direct union types: "A" | "B" | "C"
       if (ts.isUnionTypeNode(typeDecl.type)) {
         const values = typeDecl.type.types
-          .filter((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal))
+          .filter(
+            (t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal)
+          )
           .map((t) =>
             (t as ts.LiteralTypeNode).literal
               .getText(typeDeclSourceFile)
@@ -405,10 +426,9 @@ async function findTypeInImports(
 ): Promise<ts.Node | undefined> {
   // First, try using VSCode's workspace symbols to find the type dynamically
   try {
-    const symbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
-      "vscode.executeWorkspaceSymbolProvider",
-      typeName
-    );
+    const symbols = await vscode.commands.executeCommand<
+      vscode.SymbolInformation[]
+    >("vscode.executeWorkspaceSymbolProvider", typeName);
 
     if (symbols && symbols.length > 0) {
       // Look for exact type alias or interface matches
@@ -423,7 +443,9 @@ async function findTypeInImports(
 
       if (typeSymbol) {
         try {
-          const symbolDoc = await vscode.workspace.openTextDocument(typeSymbol.location.uri);
+          const symbolDoc = await vscode.workspace.openTextDocument(
+            typeSymbol.location.uri
+          );
           const symbolSourceFile = ts.createSourceFile(
             symbolDoc.fileName,
             symbolDoc.getText(),
@@ -441,50 +463,6 @@ async function findTypeInImports(
     }
   } catch {
     // Workspace symbol search not available, fall back to import scanning
-  }
-
-  // Fallback: Scan local imports
-  const localImports: ts.ImportDeclaration[] = [];
-
-  for (const statement of sourceFile.statements) {
-    if (ts.isImportDeclaration(statement)) {
-      const moduleSpec = (statement.moduleSpecifier as ts.StringLiteral).text;
-
-      // Only check local imports (relative paths and path aliases)
-      if (
-        moduleSpec.startsWith("./") ||
-        moduleSpec.startsWith("../") ||
-        moduleSpec.startsWith("@/") ||
-        moduleSpec.startsWith("~/") ||
-        moduleSpec.startsWith("src/")
-      ) {
-        localImports.push(statement);
-      }
-    }
-  }
-
-  for (const importStmt of localImports) {
-    try {
-      const importPath = await resolveImportPath(importStmt, document);
-      if (importPath) {
-        const importedDoc = await vscode.workspace.openTextDocument(importPath);
-        const importedSourceFile = ts.createSourceFile(
-          importedDoc.fileName,
-          importedDoc.getText(),
-          ts.ScriptTarget.Latest,
-          true
-        );
-        const foundTypeDecl = findExportedDeclaration(
-          importedSourceFile,
-          typeName
-        );
-        if (foundTypeDecl) {
-          return foundTypeDecl;
-        }
-      }
-    } catch (error) {
-      // Import resolution failed, continue with next import
-    }
   }
 
   return undefined;
